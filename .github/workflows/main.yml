@@ -21,6 +21,9 @@ jobs:
         
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v4
+      with:
+        validate-wrappers: false
+        gradle-version: '8.7'
       
     - name: Build with Gradle
       run: gradle assembleDebug
