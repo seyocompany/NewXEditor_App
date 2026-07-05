@@ -19,9 +19,6 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
         
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
-        
     - name: Create dummy google-services.json
       run: |
         echo '{"project_info": {"project_number": "123","firebase_url": "https://test.firebaseio.com","project_id": "test","storage_bucket": "test.appspot.com"},"client": [{"client_info": {"mobilesdk_app_id": "1:123:android:123","android_client_info": {"package_name": "com.aistudio.xeditor.abcfgh"}},"oauth_client": [],"api_key": [{"current_key": "dummy"}],"services": {"appinvite_service": {"other_platform_oauth_client": []}}}]}' > app/google-services.json
