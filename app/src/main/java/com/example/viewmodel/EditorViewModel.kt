@@ -58,6 +58,12 @@ class EditorViewModel(
             repository.updateClip(clip)
         }
     }
+
+    fun updateProject(project: ProjectEntity) {
+        viewModelScope.launch {
+            repository.updateProject(project)
+        }
+    }
     
     fun deleteClip(clip: ClipEntity) {
         viewModelScope.launch {

@@ -28,6 +28,9 @@ data class ClipEntity(
     val rotationDegrees: Int = 0,
     val flipHorizontal: Boolean = false,
     val flipVertical: Boolean = false,
+    val brightness: Float = 0.0f,
+    val contrast: Float = 0.0f,
+    val saturation: Float = 0.0f,
     val speed: Float = 1.0f,
     val orderIndex: Int = 0
 )

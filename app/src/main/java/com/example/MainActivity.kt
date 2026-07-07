@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
         val database = Room.databaseBuilder(
             applicationContext,
             AppDatabase::class.java, "xeditor-db"
-        ).build()
+        ).fallbackToDestructiveMigration().build()
         val repository = ProjectRepository(database.projectDao())
         
         val factory = object : ViewModelProvider.Factory {

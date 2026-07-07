@@ -1,0 +1,180 @@
+--- app/src/main/java/com/example/ui/screens/EditorScreen.kt
++++ app/src/main/java/com/example/ui/screens/EditorScreen.kt
+@@ -40,6 +40,13 @@
+ import androidx.media3.exoplayer.ExoPlayer
+ import androidx.media3.ui.PlayerView
++import androidx.media3.transformer.Composition
++import androidx.media3.transformer.EditedMediaItem
++import androidx.media3.transformer.EditedMediaItemSequence
++import androidx.media3.transformer.ExportException
++import androidx.media3.transformer.ExportResult
++import androidx.media3.transformer.Transformer
++import android.widget.Toast
++import java.io.File
+ import com.example.ui.theme.TimelineBg
+ import com.example.viewmodel.EditorViewModel
++import com.example.data.room.ClipEntity
+ 
+@@ -91,4 +98,7 @@
+ 
+     var showAiDialog by remember { mutableStateOf(false) }
++    var selectedClip by remember { mutableStateOf<ClipEntity?>(null) }
++    var showTrimDialog by remember { mutableStateOf(false) }
++    var isExporting by remember { mutableStateOf(false) }
+ 
+     Scaffold(
+@@ -122,5 +132,46 @@
+                         Spacer(Modifier.width(8.dp))
+                         Button(
+-                            onClick = { /* Export */ },
++                            onClick = {
++                                if (uiState.clips.isEmpty() || isExporting) return@Button
++                                isExporting = true
++                                
++                                val editedMediaItems = uiState.clips.map { clip ->
++                                    val clippingConfiguration = MediaItem.ClippingConfiguration.Builder()
++                                        .setStartPositionMs(clip.startTimeMs)
++                                        .apply {
++                                            if (clip.endTimeMs > 0) {
++                                                setEndPositionMs(clip.endTimeMs)
++                                            }
++                                        }
++                                        .build()
++                                        
++                                    val mediaItem = MediaItem.Builder()
++                                        .setUri(Uri.parse(clip.uri))
++                                        .setClippingConfiguration(clippingConfiguration)
++                                        .build()
++                                        
++                                    EditedMediaItem.Builder(mediaItem).build()
++                                }
++                                
++                                val composition = Composition.Builder(
++                                    EditedMediaItemSequence(editedMediaItems)
++                                ).build()
++                                
++                                val outputFile = File(context.cacheDir, "exported_video_${System.currentTimeMillis()}.mp4")
++                                
++                                val transformer = Transformer.Builder(context)
++                                    .addListener(object : Transformer.Listener {
++                                        override fun onCompleted(composition: Composition, exportResult: ExportResult) {
++                                            isExporting = false
++                                            Toast.makeText(context, "Exported to ${outputFile.absolutePath}", Toast.LENGTH_LONG).show()
++                                        }
++                                        override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
++                                            isExporting = false
++                                            Toast.makeText(context, "Export failed: ${exportException.message}", Toast.LENGTH_LONG).show()
++                                        }
++                                    })
++                                    .build()
++                                    
++                                transformer.start(composition, outputFile.absolutePath)
++                            },
+                             colors = ButtonDefaults.buttonColors(
+                                 containerColor = MaterialTheme.colorScheme.primary,
+@@ -131,5 +182,10 @@
+                             modifier = Modifier.height(32.dp)
+                         ) {
+-                            Text("EXPORT", fontWeight = FontWeight.Bold, fontSize = 12.sp)
++                            if (isExporting) {
++                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
++                                Spacer(Modifier.width(8.dp))
++                                Text("EXPORTING", fontWeight = FontWeight.Bold, fontSize = 12.sp)
++                            } else {
++                                Text("EXPORT", fontWeight = FontWeight.Bold, fontSize = 12.sp)
++                            }
+                         }
+                     }
+@@ -248,8 +304,11 @@
+                             items(uiState.clips) { clip ->
+                                 Box(
+                                     modifier = Modifier
+                                         .width(96.dp)
+                                         .fillMaxHeight()
+-                                        .background(Color(0xFF8C9EFF), RoundedCornerShape(4.dp))
++                                        .background(
++                                            if (selectedClip?.id == clip.id) Color(0xFF536DFE) else Color(0xFF8C9EFF), 
++                                            RoundedCornerShape(4.dp)
++                                        )
+                                         .border(2.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
++                                        .clickable { selectedClip = clip },
+                                     contentAlignment = Alignment.Center
+@@ -298,9 +357,11 @@
+                     ToolbarItem(icon = Icons.Default.Tune, label = "EDIT", tint = MaterialTheme.colorScheme.primary)
+                     ToolbarItem(icon = Icons.Default.GraphicEq, label = "AUDIO")
+                     ToolbarItem(icon = Icons.Default.TextFields, label = "TEXT")
+                     ToolbarItem(icon = Icons.Default.AutoAwesome, label = "EFFECTS")
+                     ToolbarItem(icon = Icons.Default.Layers, label = "LAYER")
+-                    ToolbarItem(icon = Icons.Default.ContentCut, label = "SPLIT")
++                    ToolbarItem(icon = Icons.Default.ContentCut, label = "TRIM", onClick = {
++                        if (selectedClip != null) showTrimDialog = true
++                    })
+                 }
+             }
+@@ -342,6 +403,63 @@
+         )
+     }
++
++    if (showTrimDialog && selectedClip != null) {
++        val clip = selectedClip!!
++        var startMs by remember { mutableStateOf(clip.startTimeMs.toString()) }
++        var endMs by remember { mutableStateOf(if (clip.endTimeMs > 0) clip.endTimeMs.toString() else "") }
++        
++        AlertDialog(
++            onDismissRequest = { showTrimDialog = false },
++            title = { Text("Trim Clip", fontSize = 18.sp) },
++            text = {
++                Column {
++                    Text("Set the start and end positions in milliseconds.", fontSize = 14.sp)
++                    Spacer(Modifier.height(12.dp))
++                    OutlinedTextField(
++                        value = startMs,
++                        onValueChange = { startMs = it },
++                        label = { Text("Start Time (ms)") },
++                        modifier = Modifier.fillMaxWidth()
++                    )
++                    Spacer(Modifier.height(8.dp))
++                    OutlinedTextField(
++                        value = endMs,
++                        onValueChange = { endMs = it },
++                        label = { Text("End Time (ms, empty for end)") },
++                        modifier = Modifier.fillMaxWidth()
++                    )
++                }
++            },
++            confirmButton = {
++                TextButton(onClick = { 
++                    val newStart = startMs.toLongOrNull() ?: 0L
++                    val newEnd = endMs.toLongOrNull() ?: -1L
++                    viewModel.updateClip(clip.copy(
++                        startTimeMs = newStart,
++                        endTimeMs = newEnd
++                    ))
++                    showTrimDialog = false 
++                }) { 
++                    Text("Save") 
++                }
++            },
++            dismissButton = {
++                TextButton(onClick = { showTrimDialog = false }) { 
++                    Text("Cancel") 
++                }
++            }
++        )
++    }
+ }
+ 
+ @Composable
+-fun ToolbarItem(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tint: Color = Color.LightGray) {
++fun ToolbarItem(
++    icon: androidx.compose.ui.graphics.vector.ImageVector, 
++    label: String, 
++    tint: Color = Color.LightGray,
++    onClick: () -> Unit = {}
++) {
+     Column(
+         horizontalAlignment = Alignment.CenterHorizontally,
+         verticalArrangement = Arrangement.spacedBy(4.dp),
+-        modifier = Modifier.clickable { }
++        modifier = Modifier.clickable(onClick = onClick)
+     ) {

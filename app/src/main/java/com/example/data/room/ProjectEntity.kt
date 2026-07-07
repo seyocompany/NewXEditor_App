@@ -9,6 +9,10 @@ data class ProjectEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val name: String,
     val thumbnailUri: String? = null,
+    val audioUri: String? = null,
+    val audioVolume: Float = 0.5f,
+    val audioStartTimeMs: Long = 0L,
+    val audioEndTimeMs: Long = -1L,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
