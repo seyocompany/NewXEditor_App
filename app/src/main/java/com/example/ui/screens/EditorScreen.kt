@@ -62,6 +62,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private fun getEffectsForClip(clip: ClipEntity): List<androidx.media3.common.Effect> {
@@ -120,6 +121,11 @@ fun CropOverlay(
     onCropChanged: (Float, Float, Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentLeft = rememberUpdatedState(left)
+    val currentTop = rememberUpdatedState(top)
+    val currentRight = rememberUpdatedState(right)
+    val currentBottom = rememberUpdatedState(bottom)
+
     BoxWithConstraints(modifier = modifier) {
         val widthPx = constraints.maxWidth.toFloat()
         val heightPx = constraints.maxHeight.toFloat()
@@ -169,13 +175,14 @@ fun CropOverlay(
             }
             
             val handleSize = 32.dp
+            val handleDensity = LocalDensity.current.density
             
             // Top-Left Handle
             Box(
                 modifier = Modifier
                     .offset(
-                        x = (leftPx / LocalDensity.current.density).dp - handleSize / 2,
-                        y = (topPx / LocalDensity.current.density).dp - handleSize / 2
+                        x = (leftPx / handleDensity).dp - handleSize / 2,
+                        y = (topPx / handleDensity).dp - handleSize / 2
                     )
                     .size(handleSize)
                     .background(Color.White, CircleShape)
@@ -183,9 +190,11 @@ fun CropOverlay(
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            val newLeft = ((leftPx + dragAmount.x) / widthPx).coerceIn(0f, right - 0.1f)
-                            val newTop = ((topPx + dragAmount.y) / heightPx).coerceIn(0f, bottom - 0.1f)
-                            onCropChanged(newLeft, newTop, right, bottom)
+                            val curLeftPx = currentLeft.value * widthPx
+                            val curTopPx = currentTop.value * heightPx
+                            val newLeft = ((curLeftPx + dragAmount.x) / widthPx).coerceIn(0f, currentRight.value - 0.1f)
+                            val newTop = ((curTopPx + dragAmount.y) / heightPx).coerceIn(0f, currentBottom.value - 0.1f)
+                            onCropChanged(newLeft, newTop, currentRight.value, currentBottom.value)
                         }
                     }
             )
@@ -194,8 +203,8 @@ fun CropOverlay(
             Box(
                 modifier = Modifier
                     .offset(
-                        x = (rightPx / LocalDensity.current.density).dp - handleSize / 2,
-                        y = (topPx / LocalDensity.current.density).dp - handleSize / 2
+                        x = (rightPx / handleDensity).dp - handleSize / 2,
+                        y = (topPx / handleDensity).dp - handleSize / 2
                     )
                     .size(handleSize)
                     .background(Color.White, CircleShape)
@@ -203,9 +212,11 @@ fun CropOverlay(
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            val newRight = ((rightPx + dragAmount.x) / widthPx).coerceIn(left + 0.1f, 1f)
-                            val newTop = ((topPx + dragAmount.y) / heightPx).coerceIn(0f, bottom - 0.1f)
-                            onCropChanged(left, newTop, newRight, bottom)
+                            val curRightPx = currentRight.value * widthPx
+                            val curTopPx = currentTop.value * heightPx
+                            val newRight = ((curRightPx + dragAmount.x) / widthPx).coerceIn(currentLeft.value + 0.1f, 1f)
+                            val newTop = ((curTopPx + dragAmount.y) / heightPx).coerceIn(0f, currentBottom.value - 0.1f)
+                            onCropChanged(currentLeft.value, newTop, newRight, currentBottom.value)
                         }
                     }
             )
@@ -214,8 +225,8 @@ fun CropOverlay(
             Box(
                 modifier = Modifier
                     .offset(
-                        x = (leftPx / LocalDensity.current.density).dp - handleSize / 2,
-                        y = (bottomPx / LocalDensity.current.density).dp - handleSize / 2
+                        x = (leftPx / handleDensity).dp - handleSize / 2,
+                        y = (bottomPx / handleDensity).dp - handleSize / 2
                     )
                     .size(handleSize)
                     .background(Color.White, CircleShape)
@@ -223,9 +234,11 @@ fun CropOverlay(
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            val newLeft = ((leftPx + dragAmount.x) / widthPx).coerceIn(0f, right - 0.1f)
-                            val newBottom = ((bottomPx + dragAmount.y) / heightPx).coerceIn(top + 0.1f, 1f)
-                            onCropChanged(newLeft, top, right, newBottom)
+                            val curLeftPx = currentLeft.value * widthPx
+                            val curBottomPx = currentBottom.value * heightPx
+                            val newLeft = ((curLeftPx + dragAmount.x) / widthPx).coerceIn(0f, currentRight.value - 0.1f)
+                            val newBottom = ((curBottomPx + dragAmount.y) / heightPx).coerceIn(currentTop.value + 0.1f, 1f)
+                            onCropChanged(newLeft, currentTop.value, currentRight.value, newBottom)
                         }
                     }
             )
@@ -234,8 +247,8 @@ fun CropOverlay(
             Box(
                 modifier = Modifier
                     .offset(
-                        x = (rightPx / LocalDensity.current.density).dp - handleSize / 2,
-                        y = (bottomPx / LocalDensity.current.density).dp - handleSize / 2
+                        x = (rightPx / handleDensity).dp - handleSize / 2,
+                        y = (bottomPx / handleDensity).dp - handleSize / 2
                     )
                     .size(handleSize)
                     .background(Color.White, CircleShape)
@@ -243,9 +256,11 @@ fun CropOverlay(
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            val newRight = ((rightPx + dragAmount.x) / widthPx).coerceIn(left + 0.1f, 1f)
-                            val newBottom = ((bottomPx + dragAmount.y) / heightPx).coerceIn(top + 0.1f, 1f)
-                            onCropChanged(left, top, newRight, newBottom)
+                            val curRightPx = currentRight.value * widthPx
+                            val curBottomPx = currentBottom.value * heightPx
+                            val newRight = ((curRightPx + dragAmount.x) / widthPx).coerceIn(currentLeft.value + 0.1f, 1f)
+                            val newBottom = ((curBottomPx + dragAmount.y) / heightPx).coerceIn(currentTop.value + 0.1f, 1f)
+                            onCropChanged(currentLeft.value, currentTop.value, newRight, newBottom)
                         }
                     }
             )
@@ -395,6 +410,7 @@ fun EditorScreen(
     var playerTrigger by remember { mutableStateOf(0) }
     var showAudioDialog by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
+    val exportScope = rememberCoroutineScope()
 
     val thumbnails = remember { mutableStateMapOf<String, List<Bitmap>>() }
     val clipDurations = remember { mutableStateMapOf<String, Long>() }
@@ -608,41 +624,49 @@ fun EditorScreen(
                                     .addListener(object : Transformer.Listener {
                                         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                                             isExporting = false
-                                            
-                                            val values = android.content.ContentValues().apply {
-                                                put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, outputFile.name)
-                                                put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                                                    put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/XEditor")
-                                                    put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
+
+                                            exportScope.launch(Dispatchers.IO) {
+                                                val values = android.content.ContentValues().apply {
+                                                    put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, outputFile.name)
+                                                    put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                                        put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/XEditor")
+                                                        put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
+                                                    }
                                                 }
-                                            }
-                                            
-                                            val resolver = context.contentResolver
-                                            val uri = resolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-                                            
-                                            if (uri != null) {
-                                                try {
-                                                    resolver.openOutputStream(uri)?.use { outputStream ->
-                                                        java.io.FileInputStream(outputFile).use { inputStream ->
-                                                            inputStream.copyTo(outputStream)
+
+                                                val resolver = context.contentResolver
+                                                val uri = resolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+
+                                                if (uri != null) {
+                                                    try {
+                                                        resolver.openOutputStream(uri)?.use { outputStream ->
+                                                            java.io.FileInputStream(outputFile).use { inputStream ->
+                                                                inputStream.copyTo(outputStream)
+                                                            }
+                                                        }
+
+                                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                                            values.clear()
+                                                            values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0)
+                                                            resolver.update(uri, values, null, null)
+                                                        }
+
+                                                        outputFile.delete() // Clean up the external files dir file
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(context, "Saved to Movies/XEditor", Toast.LENGTH_LONG).show()
+                                                        }
+                                                    } catch (e: Exception) {
+                                                        resolver.delete(uri, null, null)
+                                                        withContext(Dispatchers.Main) {
+                                                            Toast.makeText(context, "Failed to save to Gallery: ${e.message}", Toast.LENGTH_LONG).show()
                                                         }
                                                     }
-                                                    
-                                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-                                                        values.clear()
-                                                        values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0)
-                                                        resolver.update(uri, values, null, null)
+                                                } else {
+                                                    withContext(Dispatchers.Main) {
+                                                        Toast.makeText(context, "Failed to create MediaStore entry", Toast.LENGTH_LONG).show()
                                                     }
-                                                    
-                                                    outputFile.delete() // Clean up the external files dir file
-                                                    Toast.makeText(context, "Saved to Movies/XEditor", Toast.LENGTH_LONG).show()
-                                                } catch (e: Exception) {
-                                                    resolver.delete(uri, null, null)
-                                                    Toast.makeText(context, "Failed to save to Gallery: ${e.message}", Toast.LENGTH_LONG).show()
                                                 }
-                                            } else {
-                                                Toast.makeText(context, "Failed to create MediaStore entry", Toast.LENGTH_LONG).show()
                                             }
                                         }
                                         override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
@@ -810,6 +834,7 @@ fun EditorScreen(
                                         
                                         val leftPercent = if (realDur > 0) startTime.toFloat() / realDur else 0f
                                         val rightPercent = if (realDur > 0) endTime.toFloat() / realDur else 1f
+                                        val currentClip = rememberUpdatedState(clip)
                                         
                                         Box(
                                             modifier = Modifier
@@ -883,9 +908,11 @@ fun EditorScreen(
                                                         .pointerInput(clip.id) {
                                                             detectDragGestures { change, dragAmount ->
                                                                 change.consume()
+                                                                val liveClip = currentClip.value
+                                                                val liveEnd = if (liveClip.endTimeMs > 0) liveClip.endTimeMs else realDur
                                                                 val deltaMs = ((dragAmount.x / density) / MS_TO_DP).toLong()
-                                                                val newStart = (startTime + deltaMs).coerceIn(0L, endTime - 500L)
-                                                                viewModel.updateClip(clip.copy(startTimeMs = newStart))
+                                                                val newStart = (liveClip.startTimeMs + deltaMs).coerceIn(0L, liveEnd - 500L)
+                                                                viewModel.updateClip(liveClip.copy(startTimeMs = newStart))
                                                             }
                                                         },
                                                     contentAlignment = Alignment.Center
@@ -914,9 +941,11 @@ fun EditorScreen(
                                                         .pointerInput(clip.id) {
                                                             detectDragGestures { change, dragAmount ->
                                                                 change.consume()
+                                                                val liveClip = currentClip.value
+                                                                val liveEnd = if (liveClip.endTimeMs > 0) liveClip.endTimeMs else realDur
                                                                 val deltaMs = ((dragAmount.x / density) / MS_TO_DP).toLong()
-                                                                val newEnd = (endTime + deltaMs).coerceIn(startTime + 500L, realDur)
-                                                                viewModel.updateClip(clip.copy(endTimeMs = if (newEnd >= realDur) -1L else newEnd))
+                                                                val newEnd = (liveEnd + deltaMs).coerceIn(liveClip.startTimeMs + 500L, realDur)
+                                                                viewModel.updateClip(liveClip.copy(endTimeMs = if (newEnd >= realDur) -1L else newEnd))
                                                             }
                                                         },
                                                     contentAlignment = Alignment.Center
@@ -1544,4 +1573,3 @@ private fun formatMs(ms: Long): String {
     val millis = (ms % 1000) / 100
     return "%02d:%02d.%01d".format(min, sec, millis)
 }
-
