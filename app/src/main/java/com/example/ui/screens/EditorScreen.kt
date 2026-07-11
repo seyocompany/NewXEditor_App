@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,6 +52,206 @@ import java.io.File
 import com.example.ui.theme.TimelineBg
 import com.example.viewmodel.EditorViewModel
 import com.example.data.room.ClipEntity
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+private fun getEffectsForClip(clip: ClipEntity): List<androidx.media3.common.Effect> {
+    val effects = mutableListOf<androidx.media3.common.Effect>()
+    
+    // 1. Crop
+    val cropStr = clip.cropRectString
+    if (!cropStr.isNullOrEmpty()) {
+        val parts = cropStr.split(",")
+        if (parts.size == 4) {
+            val left = parts[0].toFloatOrNull() ?: 0f
+            val top = parts[1].toFloatOrNull() ?: 0f
+            val right = parts[2].toFloatOrNull() ?: 1f
+            val bottom = parts[3].toFloatOrNull() ?: 1f
+            
+            val ndcLeft = -1f + 2f * left
+            val ndcRight = -1f + 2f * right
+            val ndcBottom = 1f - 2f * bottom
+            val ndcTop = 1f - 2f * top
+            effects.add(androidx.media3.effect.Crop(ndcLeft, ndcRight, ndcBottom, ndcTop))
+        }
+    }
+    
+    // 2. Rotation & Flip
+    if (clip.rotationDegrees != 0 || clip.flipHorizontal || clip.flipVertical) {
+        val scaleX = if (clip.flipHorizontal) -1f else 1f
+        val scaleY = if (clip.flipVertical) -1f else 1f
+        effects.add(
+            androidx.media3.effect.ScaleAndRotateTransformation.Builder()
+                .setRotationDegrees(clip.rotationDegrees.toFloat())
+                .setScale(scaleX, scaleY)
+                .build()
+        )
+    }
+    
+    // 3. Adjustments
+    if (clip.brightness != 0f) {
+        effects.add(androidx.media3.effect.Brightness(clip.brightness))
+    }
+    if (clip.contrast != 0f) {
+        effects.add(androidx.media3.effect.Contrast(clip.contrast))
+    }
+    if (clip.saturation != 0f) {
+        effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
+    }
+    
+    return effects
+}
+
+@Composable
+fun CropOverlay(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    onCropChanged: (Float, Float, Float, Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(modifier = modifier) {
+        val widthPx = constraints.maxWidth.toFloat()
+        val heightPx = constraints.maxHeight.toFloat()
+        
+        if (widthPx > 0 && heightPx > 0) {
+            val leftPx = left * widthPx
+            val topPx = top * heightPx
+            val rightPx = right * widthPx
+            val bottomPx = bottom * heightPx
+            
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val outerWidth = size.width
+                val outerHeight = size.height
+                
+                // Top overlay
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = androidx.compose.ui.geometry.Offset(0f, 0f),
+                    size = androidx.compose.ui.geometry.Size(outerWidth, topPx)
+                )
+                // Bottom overlay
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = androidx.compose.ui.geometry.Offset(0f, bottomPx),
+                    size = androidx.compose.ui.geometry.Size(outerWidth, outerHeight - bottomPx)
+                )
+                // Left overlay
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = androidx.compose.ui.geometry.Offset(0f, topPx),
+                    size = androidx.compose.ui.geometry.Size(leftPx, bottomPx - topPx)
+                )
+                // Right overlay
+                drawRect(
+                    color = Color.Black.copy(alpha = 0.6f),
+                    topLeft = androidx.compose.ui.geometry.Offset(rightPx, topPx),
+                    size = androidx.compose.ui.geometry.Size(outerWidth - rightPx, bottomPx - topPx)
+                )
+                
+                // White outline
+                drawRect(
+                    color = Color.White,
+                    topLeft = androidx.compose.ui.geometry.Offset(leftPx, topPx),
+                    size = androidx.compose.ui.geometry.Size(rightPx - leftPx, bottomPx - topPx),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                )
+            }
+            
+            val handleSize = 32.dp
+            
+            // Top-Left Handle
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = (leftPx / LocalDensity.current.density).dp - handleSize / 2,
+                        y = (topPx / LocalDensity.current.density).dp - handleSize / 2
+                    )
+                    .size(handleSize)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val newLeft = ((leftPx + dragAmount.x) / widthPx).coerceIn(0f, right - 0.1f)
+                            val newTop = ((topPx + dragAmount.y) / heightPx).coerceIn(0f, bottom - 0.1f)
+                            onCropChanged(newLeft, newTop, right, bottom)
+                        }
+                    }
+            )
+            
+            // Top-Right Handle
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = (rightPx / LocalDensity.current.density).dp - handleSize / 2,
+                        y = (topPx / LocalDensity.current.density).dp - handleSize / 2
+                    )
+                    .size(handleSize)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val newRight = ((rightPx + dragAmount.x) / widthPx).coerceIn(left + 0.1f, 1f)
+                            val newTop = ((topPx + dragAmount.y) / heightPx).coerceIn(0f, bottom - 0.1f)
+                            onCropChanged(left, newTop, newRight, bottom)
+                        }
+                    }
+            )
+            
+            // Bottom-Left Handle
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = (leftPx / LocalDensity.current.density).dp - handleSize / 2,
+                        y = (bottomPx / LocalDensity.current.density).dp - handleSize / 2
+                    )
+                    .size(handleSize)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val newLeft = ((leftPx + dragAmount.x) / widthPx).coerceIn(0f, right - 0.1f)
+                            val newBottom = ((bottomPx + dragAmount.y) / heightPx).coerceIn(top + 0.1f, 1f)
+                            onCropChanged(newLeft, top, right, newBottom)
+                        }
+                    }
+            )
+            
+            // Bottom-Right Handle
+            Box(
+                modifier = Modifier
+                    .offset(
+                        x = (rightPx / LocalDensity.current.density).dp - handleSize / 2,
+                        y = (bottomPx / LocalDensity.current.density).dp - handleSize / 2
+                    )
+                    .size(handleSize)
+                    .background(Color.White, CircleShape)
+                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val newRight = ((rightPx + dragAmount.x) / widthPx).coerceIn(left + 0.1f, 1f)
+                            val newBottom = ((bottomPx + dragAmount.y) / heightPx).coerceIn(top + 0.1f, 1f)
+                            onCropChanged(left, top, newRight, newBottom)
+                        }
+                    }
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,7 +308,7 @@ fun EditorScreen(
         }
     }
 
-    DisposableEffect(exoPlayer, audioPlayer, uiState.project?.audioUri) {
+    DisposableEffect(exoPlayer, audioPlayer, uiState.project?.audioUri, uiState.clips) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlayingState: Boolean) {
                 isPlaying = isPlayingState
@@ -130,8 +331,26 @@ fun EditorScreen(
                     audioPlayer.seekTo(newPosition.positionMs)
                 }
             }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val index = exoPlayer.currentMediaItemIndex
+                val clip = uiState.clips.getOrNull(index)
+                if (clip != null) {
+                    exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
+                    exoPlayer.setVideoEffects(getEffectsForClip(clip))
+                }
+            }
         }
         exoPlayer.addListener(listener)
+        
+        // Initial clip configuration
+        val initialIndex = exoPlayer.currentMediaItemIndex
+        val initialClip = uiState.clips.getOrNull(initialIndex)
+        if (initialClip != null) {
+            exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(initialClip.speed))
+            exoPlayer.setVideoEffects(getEffectsForClip(initialClip))
+        }
+        
         onDispose {
             exoPlayer.removeListener(listener)
         }
@@ -143,6 +362,12 @@ fun EditorScreen(
             exoPlayer.addMediaItem(MediaItem.fromUri(Uri.parse(clip.uri)))
         }
         exoPlayer.prepare()
+        val index = exoPlayer.currentMediaItemIndex
+        val clip = uiState.clips.getOrNull(index)
+        if (clip != null) {
+            exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
+            exoPlayer.setVideoEffects(getEffectsForClip(clip))
+        }
     }
 
     val pickerLauncher = rememberLauncherForActivityResult(
@@ -166,8 +391,120 @@ fun EditorScreen(
     var selectedClip by remember { mutableStateOf<ClipEntity?>(null) }
     var showTrimDialog by remember { mutableStateOf(false) }
     var showAdjustDialog by remember { mutableStateOf(false) }
+    var showTransformDialog by remember { mutableStateOf(false) }
+    var playerTrigger by remember { mutableStateOf(0) }
     var showAudioDialog by remember { mutableStateOf(false) }
     var isExporting by remember { mutableStateOf(false) }
+
+    val thumbnails = remember { mutableStateMapOf<String, List<Bitmap>>() }
+    val clipDurations = remember { mutableStateMapOf<String, Long>() }
+    var currentPositionMs by remember { mutableStateOf(0L) }
+    val localDensity = LocalDensity.current
+    val density = localDensity.density
+    val MS_TO_DP = 0.02f // 20.dp per second (1000ms)
+
+    LaunchedEffect(uiState.clips) {
+        uiState.clips.forEach { clip ->
+            if (!thumbnails.containsKey(clip.id)) {
+                withContext(Dispatchers.IO) {
+                    val retriever = MediaMetadataRetriever()
+                    try {
+                        retriever.setDataSource(context, Uri.parse(clip.uri))
+                        val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        val durationMs = durationStr?.toLongOrNull() ?: 5000L
+                        clipDurations[clip.id] = durationMs
+                        
+                        val bitmapList = mutableListOf<Bitmap>()
+                        val seconds = (durationMs / 1000L).coerceIn(1L, 15L)
+                        val stepMs = durationMs / seconds
+                        for (i in 0 until seconds) {
+                            val timeUs = (i * stepMs) * 1000L
+                            val bitmap = retriever.getFrameAtTime(timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                            if (bitmap != null) {
+                                val scaled = Bitmap.createScaledBitmap(bitmap, 120, 90, false)
+                                bitmapList.add(scaled)
+                            }
+                        }
+                        if (bitmapList.isNotEmpty()) {
+                            withContext(Dispatchers.Main) {
+                                thumbnails[clip.id] = bitmapList
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        if (!clipDurations.containsKey(clip.id)) {
+                            clipDurations[clip.id] = 5000L
+                        }
+                    } finally {
+                        try {
+                            retriever.release()
+                        } catch (ex: Exception) {}
+                    }
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(isPlaying, uiState.clips) {
+        while (true) {
+            try {
+                if (exoPlayer.playbackState != Player.STATE_IDLE) {
+                    val currentIndex = exoPlayer.currentMediaItemIndex
+                    var pos = 0L
+                    for (i in 0 until currentIndex) {
+                        if (i < uiState.clips.size) {
+                            val clip = uiState.clips[i]
+                            val realDur = clipDurations[clip.id] ?: 5000L
+                            pos += if (clip.endTimeMs > 0) {
+                                (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
+                            } else {
+                                (realDur - clip.startTimeMs).coerceAtLeast(0L)
+                            }
+                        }
+                    }
+                    val activeClip = uiState.clips.getOrNull(currentIndex)
+                    val clipCurrentPos = exoPlayer.currentPosition
+                    if (activeClip != null) {
+                        val relativePos = (clipCurrentPos - activeClip.startTimeMs).coerceAtLeast(0L)
+                        currentPositionMs = pos + relativePos
+                    } else {
+                        currentPositionMs = pos + clipCurrentPos
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            kotlinx.coroutines.delay(if (isPlaying) 30L else 200L)
+        }
+    }
+
+    val totalDurationMs = uiState.clips.sumOf { clip ->
+        val realDur = clipDurations[clip.id] ?: 5000L
+        if (clip.endTimeMs > 0) {
+            (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
+        } else {
+            (realDur - clip.startTimeMs).coerceAtLeast(0L)
+        }
+    }
+
+    val seekToGlobalPosition = { positionMs: Long ->
+        var remainingMs = positionMs
+        for (i in uiState.clips.indices) {
+            val clip = uiState.clips[i]
+            val realDur = clipDurations[clip.id] ?: 5000L
+            val clipPlayDur = if (clip.endTimeMs > 0) {
+                (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
+            } else {
+                (realDur - clip.startTimeMs).coerceAtLeast(0L)
+            }
+            if (remainingMs <= clipPlayDur) {
+                val targetPositionMs = clip.startTimeMs + remainingMs
+                exoPlayer.seekTo(i, targetPositionMs)
+                break
+            }
+            remainingMs -= clipPlayDur
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -218,13 +555,18 @@ fun EditorScreen(
                                         .setClippingConfiguration(clippingConfiguration)
                                         .build()
                                         
-                                    val videoEffects = mutableListOf<androidx.media3.common.Effect>()
-                                    if (clip.brightness != 0f) videoEffects.add(androidx.media3.effect.Brightness(clip.brightness))
-                                    if (clip.contrast != 0f) videoEffects.add(androidx.media3.effect.Contrast(clip.contrast))
-                                    if (clip.saturation != 0f) videoEffects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
+                                    val videoEffects = getEffectsForClip(clip)
+                                    val audioProcessors = mutableListOf<androidx.media3.common.audio.AudioProcessor>()
+                                    if (clip.speed != 1f) {
+                                        val speedProvider = object : androidx.media3.common.audio.SpeedProvider {
+                                            override fun getSpeed(timeUs: Long): Float = clip.speed
+                                            override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = androidx.media3.common.C.TIME_UNSET
+                                        }
+                                        audioProcessors.add(androidx.media3.common.audio.SpeedChangingAudioProcessor(speedProvider))
+                                    }
                                         
                                     EditedMediaItem.Builder(mediaItem)
-                                        .setEffects(androidx.media3.transformer.Effects(emptyList(), videoEffects))
+                                        .setEffects(androidx.media3.transformer.Effects(audioProcessors, videoEffects))
                                         .build()
                                 }
                                 
@@ -260,13 +602,48 @@ fun EditorScreen(
                                     Composition.Builder(videoSequence).build()
                                 }
                                 
-                                val outputFile = File(context.cacheDir, "exported_video_${System.currentTimeMillis()}.mp4")
+                                val outputFile = java.io.File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "exported_video_${System.currentTimeMillis()}.mp4")
                                 
                                 val transformer = Transformer.Builder(context)
                                     .addListener(object : Transformer.Listener {
                                         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                                             isExporting = false
-                                            Toast.makeText(context, "Exported to ${outputFile.absolutePath}", Toast.LENGTH_LONG).show()
+                                            
+                                            val values = android.content.ContentValues().apply {
+                                                put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, outputFile.name)
+                                                put(android.provider.MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                                    put(android.provider.MediaStore.Video.Media.RELATIVE_PATH, "Movies/XEditor")
+                                                    put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
+                                                }
+                                            }
+                                            
+                                            val resolver = context.contentResolver
+                                            val uri = resolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+                                            
+                                            if (uri != null) {
+                                                try {
+                                                    resolver.openOutputStream(uri)?.use { outputStream ->
+                                                        java.io.FileInputStream(outputFile).use { inputStream ->
+                                                            inputStream.copyTo(outputStream)
+                                                        }
+                                                    }
+                                                    
+                                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                                                        values.clear()
+                                                        values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0)
+                                                        resolver.update(uri, values, null, null)
+                                                    }
+                                                    
+                                                    outputFile.delete() // Clean up the external files dir file
+                                                    Toast.makeText(context, "Saved to Movies/XEditor", Toast.LENGTH_LONG).show()
+                                                } catch (e: Exception) {
+                                                    resolver.delete(uri, null, null)
+                                                    Toast.makeText(context, "Failed to save to Gallery: ${e.message}", Toast.LENGTH_LONG).show()
+                                                }
+                                            } else {
+                                                Toast.makeText(context, "Failed to create MediaStore entry", Toast.LENGTH_LONG).show()
+                                            }
                                         }
                                         override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                                             isExporting = false
@@ -314,6 +691,12 @@ fun EditorScreen(
                         PlayerView(context).apply {
                             player = exoPlayer
                             useController = false // Hide default controls for custom UI feel
+                        }
+                    },
+                    update = { playerView ->
+                        val trigger = playerTrigger
+                        if (playerView.player != exoPlayer) {
+                            playerView.player = exoPlayer
                         }
                     },
                     modifier = Modifier
@@ -364,136 +747,320 @@ fun EditorScreen(
             ) {
                 Divider(color = MaterialTheme.colorScheme.outline)
                 
-                // Time Codes
+                // Time Codes / Ruler
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("00:00:00:00", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = Color.LightGray)
-                    Text("00:00:15:22", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
-                    Text("00:01:04:15", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = Color.LightGray)
+                    val currentStr = formatMs(currentPositionMs)
+                    val totalStr = formatMs(totalDurationMs)
+                    Text("Playhead: $currentStr", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
+                    Text("Total: $totalStr", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color.LightGray)
                 }
 
-                // The Scrubber/Tracks
+                // Scrollable ruler, tracks and playhead
+                val scrollState = rememberScrollState()
+                
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 8.dp)
                 ) {
-                    // Playhead Line
-                    Box(
+                    // Compute total visual width in dp based on real durations of all clips
+                    val totalClipsWidthDp = uiState.clips.sumOf { clip ->
+                        val realDur = clipDurations[clip.id] ?: 5000L
+                        (realDur * MS_TO_DP).toDouble()
+                    }.dp
+                    
+                    val timelineContentWidthDp = totalClipsWidthDp + 120.dp
+                    
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.Center)
-                            .fillMaxHeight()
-                            .width(2.dp)
-                            .background(MaterialTheme.colorScheme.primary)
+                            .fillMaxSize()
+                            .horizontalScroll(scrollState)
                     ) {
                         Box(
                             modifier = Modifier
-                                .offset(x = (-3).dp, y = (-4).dp)
-                                .size(8.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        )
-                    }
-
-                    Column(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        // Main Video Track (Clips)
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                                .fillMaxHeight()
+                                .width(timelineContentWidthDp)
+                                .padding(horizontal = 16.dp)
                         ) {
-                            items(uiState.clips) { clip ->
-                                Box(
-                                    modifier = Modifier
-                                        .width(96.dp)
-                                        .fillMaxHeight()
-                                        .background(
-                                            if (selectedClip?.id == clip.id) Color(0xFF536DFE) else Color(0xFF8C9EFF), 
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .border(2.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
-                                        .clickable { selectedClip = clip },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("Clip ${clip.orderIndex + 1}", fontSize = 10.sp, color = Color.White)
-                                }
-                            }
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .width(48.dp)
-                                        .fillMaxHeight()
-                                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
-                                        .clickable { pickerLauncher.launch("video/*") },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = "Add Media", tint = Color.White, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                        
-                        Spacer(Modifier.height(8.dp))
-                        
-                        // Audio Track UI
-                        val hasAudio = uiState.project?.audioUri != null
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
-                                .background(
-                                    if (hasAudio) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = if (hasAudio) MaterialTheme.colorScheme.secondary else Color.Transparent,
-                                    shape = RoundedCornerShape(6.dp)
-                                )
-                                .clickable {
-                                    showAudioDialog = true
-                                }
-                                .padding(horizontal = 12.dp, vertical = 4.dp)
-                                .testTag("audio_track_box"),
-                            contentAlignment = Alignment.CenterStart
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.GraphicEq,
-                                        contentDescription = "Audio track",
-                                        tint = if (hasAudio) MaterialTheme.colorScheme.onSecondaryContainer else Color.LightGray,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = if (hasAudio) {
-                                            "BGM: ${uiState.project?.audioUri?.substringAfterLast("/") ?: "Added Music"}"
-                                        } else {
-                                            "No Background Music (Tap to Add)"
-                                        },
-                                        fontSize = 11.sp,
-                                        color = if (hasAudio) MaterialTheme.colorScheme.onSecondaryContainer else Color.LightGray,
-                                        fontWeight = FontWeight.Medium,
-                                        maxLines = 1
-                                    )
+                                // 1. Main Video Track (Clips)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(72.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    uiState.clips.forEach { clip ->
+                                        val realDur = clipDurations[clip.id] ?: 5000L
+                                        val clipWidthDp = (realDur * MS_TO_DP).coerceAtLeast(100f).dp
+                                        
+                                        val startTime = clip.startTimeMs
+                                        val endTime = if (clip.endTimeMs > 0) clip.endTimeMs else realDur
+                                        
+                                        val leftPercent = if (realDur > 0) startTime.toFloat() / realDur else 0f
+                                        val rightPercent = if (realDur > 0) endTime.toFloat() / realDur else 1f
+                                        
+                                        Box(
+                                            modifier = Modifier
+                                                .width(clipWidthDp)
+                                                .fillMaxHeight()
+                                                .background(Color.DarkGray, RoundedCornerShape(6.dp))
+                                                .border(
+                                                    width = if (selectedClip?.id == clip.id) 2.dp else 1.dp,
+                                                    color = if (selectedClip?.id == clip.id) MaterialTheme.colorScheme.primary else Color.Gray,
+                                                    shape = RoundedCornerShape(6.dp)
+                                                )
+                                                .clickable { selectedClip = clip }
+                                        ) {
+                                            // Filmstrip
+                                            Row(modifier = Modifier.fillMaxSize()) {
+                                                val clipThumbs = thumbnails[clip.id] ?: emptyList()
+                                                if (clipThumbs.isNotEmpty()) {
+                                                    clipThumbs.forEach { bitmap ->
+                                                        androidx.compose.foundation.Image(
+                                                            bitmap = bitmap.asImageBitmap(),
+                                                            contentDescription = null,
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier
+                                                                .fillMaxHeight()
+                                                                .weight(1f)
+                                                        )
+                                                    }
+                                                } else {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .background(Color(0xFF3F51B5).copy(alpha = 0.2f)),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Dim overlays for trimmed parts
+                                            Row(modifier = Modifier.fillMaxSize()) {
+                                                if (leftPercent > 0.001f) {
+                                                    Box(modifier = Modifier.fillMaxHeight().weight(leftPercent).background(Color.Black.copy(alpha = 0.6f)))
+                                                }
+                                                Box(modifier = Modifier.fillMaxHeight().weight((rightPercent - leftPercent).coerceAtLeast(0.001f)))
+                                                if (rightPercent < 0.999f) {
+                                                    Box(modifier = Modifier.fillMaxHeight().weight(1f - rightPercent).background(Color.Black.copy(alpha = 0.6f)))
+                                                }
+                                            }
+                                            
+                                            // Label Overlay
+                                            Box(
+                                                modifier = Modifier
+                                                    .align(Alignment.TopStart)
+                                                    .padding(4.dp)
+                                                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(2.dp))
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("Clip ${clip.orderIndex + 1}", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                            }
+                                            
+                                            // Drag Trim Handles (only if selected)
+                                            if (selectedClip?.id == clip.id) {
+                                                // Left Trim Handle
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.CenterStart)
+                                                        .offset(x = (leftPercent * (realDur * MS_TO_DP)).dp - 12.dp)
+                                                        .width(24.dp)
+                                                        .fillMaxHeight()
+                                                        .pointerInput(clip.id) {
+                                                            detectDragGestures { change, dragAmount ->
+                                                                change.consume()
+                                                                val deltaMs = ((dragAmount.x / density) / MS_TO_DP).toLong()
+                                                                val newStart = (startTime + deltaMs).coerceIn(0L, endTime - 500L)
+                                                                viewModel.updateClip(clip.copy(startTimeMs = newStart))
+                                                            }
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .width(6.dp)
+                                                            .fillMaxHeight()
+                                                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(10.dp)
+                                                            .background(Color.White, CircleShape)
+                                                            .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                                    )
+                                                }
+                                                
+                                                // Right Trim Handle
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.CenterStart)
+                                                        .offset(x = (rightPercent * (realDur * MS_TO_DP)).dp - 12.dp)
+                                                        .width(24.dp)
+                                                        .fillMaxHeight()
+                                                        .pointerInput(clip.id) {
+                                                            detectDragGestures { change, dragAmount ->
+                                                                change.consume()
+                                                                val deltaMs = ((dragAmount.x / density) / MS_TO_DP).toLong()
+                                                                val newEnd = (endTime + deltaMs).coerceIn(startTime + 500L, realDur)
+                                                                viewModel.updateClip(clip.copy(endTimeMs = if (newEnd >= realDur) -1L else newEnd))
+                                                            }
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .width(6.dp)
+                                                            .fillMaxHeight()
+                                                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
+                                                    )
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(10.dp)
+                                                            .background(Color.White, CircleShape)
+                                                            .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Add Media Clip Button
+                                    Box(
+                                        modifier = Modifier
+                                            .width(56.dp)
+                                            .fillMaxHeight()
+                                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+                                            .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
+                                            .clickable { pickerLauncher.launch("video/*") },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = "Add Media", tint = Color.White, modifier = Modifier.size(20.dp))
+                                    }
                                 }
-                                if (hasAudio) {
-                                    Text(
-                                        text = "Trim: ${uiState.project?.audioStartTimeMs}ms - " +
-                                                if ((uiState.project?.audioEndTimeMs ?: -1L) > 0) "${uiState.project?.audioEndTimeMs}ms" else "End",
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                                    )
+                                
+                                // 2. Audio Track UI
+                                val hasAudio = uiState.project?.audioUri != null
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(36.dp)
+                                        .background(
+                                            if (hasAudio) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                                            RoundedCornerShape(6.dp)
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (hasAudio) MaterialTheme.colorScheme.secondary else Color.Transparent,
+                                            shape = RoundedCornerShape(6.dp)
+                                        )
+                                        .clickable {
+                                            showAudioDialog = true
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 4.dp)
+                                        .testTag("audio_track_box"),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.GraphicEq,
+                                                contentDescription = "Audio track",
+                                                tint = if (hasAudio) MaterialTheme.colorScheme.onSecondaryContainer else Color.LightGray,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = if (hasAudio) {
+                                                    "BGM: ${uiState.project?.audioUri?.substringAfterLast("/") ?: "Added Music"}"
+                                                } else {
+                                                    "No Background Music (Tap to Add)"
+                                                },
+                                                fontSize = 11.sp,
+                                                color = if (hasAudio) MaterialTheme.colorScheme.onSecondaryContainer else Color.LightGray,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        if (hasAudio) {
+                                            Text(
+                                                text = "Trim: ${uiState.project?.audioStartTimeMs}ms - " +
+                                                        if ((uiState.project?.audioEndTimeMs ?: -1L) > 0) "${uiState.project?.audioEndTimeMs}ms" else "End",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                            )
+                                        }
+                                    }
                                 }
+                            }
+                            
+                            // 3. Playhead Line
+                            var playheadXDp = 0.dp
+                            var accumulatedX = 0f
+                            var remainingPlayMs = currentPositionMs
+                            var foundPlayhead = false
+                            for (clip in uiState.clips) {
+                                val realDur = clipDurations[clip.id] ?: 5000L
+                                val clipPlayDur = if (clip.endTimeMs > 0) {
+                                    (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
+                                } else {
+                                    (realDur - clip.startTimeMs).coerceAtLeast(0L)
+                                }
+                                
+                                if (!foundPlayhead && remainingPlayMs <= clipPlayDur) {
+                                    val offsetInClip = clip.startTimeMs + remainingPlayMs
+                                    playheadXDp = (accumulatedX + offsetInClip * MS_TO_DP).dp
+                                    foundPlayhead = true
+                                }
+                                accumulatedX += realDur * MS_TO_DP
+                                remainingPlayMs -= clipPlayDur
+                            }
+                            if (!foundPlayhead && uiState.clips.isNotEmpty()) {
+                                val lastClip = uiState.clips.last()
+                                val realDur = clipDurations[lastClip.id] ?: 5000L
+                                val endTime = if (lastClip.endTimeMs > 0) lastClip.endTimeMs else realDur
+                                playheadXDp = (accumulatedX - realDur * MS_TO_DP + endTime * MS_TO_DP).dp
+                            }
+                            
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .width(2.dp)
+                                    .offset(x = playheadXDp)
+                                    .background(MaterialTheme.colorScheme.primary)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .offset(x = (-5).dp, y = 0.dp)
+                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                        .pointerInput(Unit) {
+                                            detectDragGestures { change, dragAmount ->
+                                                change.consume()
+                                                val deltaMs = ((dragAmount.x / density) / MS_TO_DP).toLong()
+                                                val newPos = (currentPositionMs + deltaMs).coerceIn(0L, totalDurationMs)
+                                                currentPositionMs = newPos
+                                                seekToGlobalPosition(newPos)
+                                            }
+                                        }
+                                )
                             }
                         }
                     }
@@ -512,6 +1079,9 @@ fun EditorScreen(
                     ToolbarItem(icon = Icons.Default.Tune, label = "ADJUST", tint = MaterialTheme.colorScheme.primary, onClick = {
                         if (selectedClip != null) showAdjustDialog = true
                     })
+                    ToolbarItem(icon = Icons.Default.Crop, label = "TRANSFORM", onClick = {
+                        if (selectedClip != null) showTransformDialog = true
+                    })
                     ToolbarItem(icon = Icons.Default.GraphicEq, label = "AUDIO", onClick = {
                         showAudioDialog = true
                     })
@@ -519,7 +1089,7 @@ fun EditorScreen(
                     ToolbarItem(icon = Icons.Default.AutoAwesome, label = "EFFECTS")
                     ToolbarItem(icon = Icons.Default.Layers, label = "LAYER")
                     ToolbarItem(icon = Icons.Default.ContentCut, label = "TRIM", onClick = {
-                        if (selectedClip != null) showTrimDialog = true
+                        Toast.makeText(context, "Trim directly on the timeline by dragging clip edges!", Toast.LENGTH_LONG).show()
                     })
                 }
             }
@@ -533,7 +1103,13 @@ fun EditorScreen(
         var saturation by remember { mutableStateOf(clip.saturation) }
         
         LaunchedEffect(brightness, contrast, saturation) {
-            val effects = mutableListOf<androidx.media3.common.Effect>()
+            val effects = getEffectsForClip(clip).toMutableList()
+            // Remove existing brightness, contrast, saturation effects so we can override them
+            effects.removeAll { 
+                it is androidx.media3.effect.Brightness || 
+                it is androidx.media3.effect.Contrast || 
+                it is androidx.media3.effect.HslAdjustment 
+            }
             if (brightness != 0f) {
                 effects.add(androidx.media3.effect.Brightness(brightness))
             }
@@ -549,11 +1125,7 @@ fun EditorScreen(
         AlertDialog(
             onDismissRequest = { 
                 showAdjustDialog = false 
-                val effects = mutableListOf<androidx.media3.common.Effect>()
-                if (clip.brightness != 0f) effects.add(androidx.media3.effect.Brightness(clip.brightness))
-                if (clip.contrast != 0f) effects.add(androidx.media3.effect.Contrast(clip.contrast))
-                if (clip.saturation != 0f) effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
-                exoPlayer.setVideoEffects(effects)
+                exoPlayer.setVideoEffects(getEffectsForClip(clip))
             },
             title = { Text("Adjust", fontSize = 18.sp) },
             text = {
@@ -595,11 +1167,202 @@ fun EditorScreen(
             dismissButton = {
                 TextButton(onClick = { 
                     showAdjustDialog = false 
-                    val effects = mutableListOf<androidx.media3.common.Effect>()
-                    if (clip.brightness != 0f) effects.add(androidx.media3.effect.Brightness(clip.brightness))
-                    if (clip.contrast != 0f) effects.add(androidx.media3.effect.Contrast(clip.contrast))
-                    if (clip.saturation != 0f) effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
-                    exoPlayer.setVideoEffects(effects)
+                    exoPlayer.setVideoEffects(getEffectsForClip(clip))
+                }) { 
+                    Text("Cancel") 
+                }
+            }
+        )
+    }
+
+    if (showTransformDialog && selectedClip != null) {
+        val clip = selectedClip!!
+        var left by remember { mutableStateOf(0f) }
+        var top by remember { mutableStateOf(0f) }
+        var right by remember { mutableStateOf(1f) }
+        var bottom by remember { mutableStateOf(1f) }
+        
+        LaunchedEffect(clip) {
+            val cropStr = clip.cropRectString
+            if (!cropStr.isNullOrEmpty()) {
+                val parts = cropStr.split(",")
+                if (parts.size == 4) {
+                    left = parts[0].toFloatOrNull() ?: 0f
+                    top = parts[1].toFloatOrNull() ?: 0f
+                    right = parts[2].toFloatOrNull() ?: 1f
+                    bottom = parts[3].toFloatOrNull() ?: 1f
+                }
+            } else {
+                left = 0f
+                top = 0f
+                right = 1f
+                bottom = 1f
+            }
+        }
+        
+        var rotationDegrees by remember { mutableStateOf(clip.rotationDegrees) }
+        var flipHorizontal by remember { mutableStateOf(clip.flipHorizontal) }
+        var flipVertical by remember { mutableStateOf(clip.flipVertical) }
+        var speed by remember { mutableStateOf(clip.speed) }
+        
+        LaunchedEffect(left, top, right, bottom, rotationDegrees, flipHorizontal, flipVertical) {
+            val effects = mutableListOf<androidx.media3.common.Effect>()
+            if (left > 0f || top > 0f || right < 1f || bottom < 1f) {
+                val ndcLeft = -1f + 2f * left
+                val ndcRight = -1f + 2f * right
+                val ndcBottom = 1f - 2f * bottom
+                val ndcTop = 1f - 2f * top
+                effects.add(androidx.media3.effect.Crop(ndcLeft, ndcRight, ndcBottom, ndcTop))
+            }
+            if (rotationDegrees != 0 || flipHorizontal || flipVertical) {
+                val scaleX = if (flipHorizontal) -1f else 1f
+                val scaleY = if (flipVertical) -1f else 1f
+                effects.add(
+                    androidx.media3.effect.ScaleAndRotateTransformation.Builder()
+                        .setRotationDegrees(rotationDegrees.toFloat())
+                        .setScale(scaleX, scaleY)
+                        .build()
+                )
+            }
+            if (clip.brightness != 0f) effects.add(androidx.media3.effect.Brightness(clip.brightness))
+            if (clip.contrast != 0f) effects.add(androidx.media3.effect.Contrast(clip.contrast))
+            if (clip.saturation != 0f) effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
+            
+            exoPlayer.setVideoEffects(effects)
+        }
+        
+        LaunchedEffect(speed) {
+            exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(speed))
+        }
+        
+        AlertDialog(
+            onDismissRequest = { 
+                showTransformDialog = false
+                playerTrigger++
+                exoPlayer.setVideoEffects(getEffectsForClip(clip))
+                exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
+            },
+            title = { Text("Transform Clip", fontSize = 18.sp) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .background(Color.Black)
+                            .clip(RoundedCornerShape(8.dp))
+                    ) {
+                        AndroidView(
+                            factory = {
+                                PlayerView(context).apply {
+                                    player = exoPlayer
+                                    useController = false
+                                }
+                            },
+                            update = { playerView ->
+                                if (playerView.player != exoPlayer) {
+                                    playerView.player = exoPlayer
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        
+                        CropOverlay(
+                            left = left,
+                            top = top,
+                            right = right,
+                            bottom = bottom,
+                            onCropChanged = { newL, newT, newR, newB ->
+                                left = newL
+                                top = newT
+                                right = newR
+                                bottom = newB
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    
+                    Spacer(Modifier.height(12.dp))
+                    
+                    TextButton(
+                        onClick = {
+                            left = 0f
+                            top = 0f
+                            right = 1f
+                            bottom = 1f
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text("Reset Crop", fontSize = 12.sp)
+                    }
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { rotationDegrees = (rotationDegrees + 90) % 360 },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+                        ) {
+                            Text("Rotate 90°", fontSize = 12.sp)
+                        }
+                        
+                        OutlinedIconToggleButton(
+                            checked = flipHorizontal,
+                            onCheckedChange = { flipHorizontal = it },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Flip H", fontSize = 12.sp, color = if (flipHorizontal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        }
+                        
+                        OutlinedIconToggleButton(
+                            checked = flipVertical,
+                            onCheckedChange = { flipVertical = it },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Flip V", fontSize = 12.sp, color = if (flipVertical) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                    
+                    Spacer(Modifier.height(12.dp))
+                    
+                    Text("Playback Speed: ${"%.1f".format(speed)}x", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Slider(
+                        value = speed,
+                        onValueChange = { speed = it },
+                        valueRange = 0.5f..2.0f,
+                        steps = 14
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { 
+                    val cropStr = "$left,$top,$right,$bottom"
+                    viewModel.updateClip(clip.copy(
+                        cropRectString = if (left == 0f && top == 0f && right == 1f && bottom == 1f) null else cropStr,
+                        rotationDegrees = rotationDegrees,
+                        flipHorizontal = flipHorizontal,
+                        flipVertical = flipVertical,
+                        speed = speed
+                    ))
+                    showTransformDialog = false
+                    playerTrigger++
+                }) { 
+                    Text("Save") 
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    showTransformDialog = false
+                    playerTrigger++
+                    exoPlayer.setVideoEffects(getEffectsForClip(clip))
+                    exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
                 }) { 
                     Text("Cancel") 
                 }
@@ -639,54 +1402,6 @@ fun EditorScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showAiDialog = false }) { Text("Close") }
-            }
-        )
-    }
-
-    if (showTrimDialog && selectedClip != null) {
-        val clip = selectedClip!!
-        var startMs by remember { mutableStateOf(clip.startTimeMs.toString()) }
-        var endMs by remember { mutableStateOf(if (clip.endTimeMs > 0) clip.endTimeMs.toString() else "") }
-        
-        AlertDialog(
-            onDismissRequest = { showTrimDialog = false },
-            title = { Text("Trim Clip", fontSize = 18.sp) },
-            text = {
-                Column {
-                    Text("Set the start and end positions in milliseconds.", fontSize = 14.sp)
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = startMs,
-                        onValueChange = { startMs = it },
-                        label = { Text("Start Time (ms)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = endMs,
-                        onValueChange = { endMs = it },
-                        label = { Text("End Time (ms, empty for end)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { 
-                    val newStart = startMs.toLongOrNull() ?: 0L
-                    val newEnd = endMs.toLongOrNull() ?: -1L
-                    viewModel.updateClip(clip.copy(
-                        startTimeMs = newStart,
-                        endTimeMs = newEnd
-                    ))
-                    showTrimDialog = false 
-                }) { 
-                    Text("Save") 
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showTrimDialog = false }) { 
-                    Text("Cancel") 
-                }
             }
         )
     }
@@ -820,5 +1535,13 @@ fun ToolbarItem(
         Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(24.dp))
         Text(label, fontSize = 10.sp, fontWeight = if (tint != Color.LightGray) FontWeight.Bold else FontWeight.Normal, color = tint)
     }
+}
+
+private fun formatMs(ms: Long): String {
+    val totalSec = ms / 1000
+    val min = totalSec / 60
+    val sec = totalSec % 60
+    val millis = (ms % 1000) / 100
+    return "%02d:%02d.%01d".format(min, sec, millis)
 }
 

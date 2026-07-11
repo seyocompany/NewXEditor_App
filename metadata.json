@@ -1,6 +1,6 @@
 {
   "name": "XEditor",
-  "description": "A local, offline video editor with Gemini integration.",
+  "description": "Video Editor APP",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
