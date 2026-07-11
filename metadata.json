@@ -1,6 +1,6 @@
 {
   "name": "XEditor",
-  "description": "Video Editor APP",
+  "description": "Video Editor APP for All",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
