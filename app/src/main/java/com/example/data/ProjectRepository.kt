@@ -4,7 +4,7 @@ import android.util.Log
 import com.example.data.room.ClipEntity
 import com.example.data.room.ProjectDao
 import com.example.data.room.ProjectEntity
-import com.example.data.room.TextEntity   // <-- NEW IMPORT
+import com.example.data.room.TextEntity
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.firestore
@@ -17,12 +17,15 @@ class ProjectRepository(
     private val projectDao: ProjectDao
 ) {
     private val TAG = "ProjectRepository"
-    
-    // Check if Firebase is initialized
+
+    // ---------- FIREBASE AVAILABILITY ----------
     private val isFirebaseAvailable: Boolean
         get() = try { Firebase.auth; true } catch (e: Exception) { false }
 
-    // ---- Projects ----
+    // ============================================================
+    //  PROJECT OPERATIONS
+    // ============================================================
+
     val allProjects: Flow<List<ProjectEntity>> = projectDao.getAllProjects()
 
     fun getProject(id: String): Flow<ProjectEntity?> = projectDao.getProjectById(id)
@@ -34,7 +37,7 @@ class ProjectRepository(
         syncToFirestore(project)
         return id
     }
-    
+
     suspend fun updateProject(project: ProjectEntity) {
         val updated = project.copy(updatedAt = System.currentTimeMillis())
         projectDao.updateProject(updated)
@@ -56,18 +59,21 @@ class ProjectRepository(
         }
     }
 
-    // ---- Clips ----
-    fun getClipsForProject(projectId: String): Flow<List<ClipEntity>> = projectDao.getClipsForProject(projectId)
+    // ============================================================
+    //  CLIP OPERATIONS
+    // ============================================================
+
+    fun getClipsForProject(projectId: String): Flow<List<ClipEntity>> =
+        projectDao.getClipsForProject(projectId)
 
     suspend fun addClip(clip: ClipEntity) {
         projectDao.insertClip(clip)
-        // Also update project's updatedAt
         val project = projectDao.getProjectById(clip.projectId).firstOrNull()
         if (project != null) {
             updateProject(project)
         }
     }
-    
+
     suspend fun updateClip(clip: ClipEntity) {
         projectDao.updateClip(clip)
         val project = projectDao.getProjectById(clip.projectId).firstOrNull()
@@ -80,13 +86,15 @@ class ProjectRepository(
         projectDao.deleteClipById(clip.id)
     }
 
-    // ---- Texts (NEW) ----
+    // ============================================================
+    //  TEXT OVERLAY OPERATIONS  (NEW)
+    // ============================================================
+
     fun getTextsForProject(projectId: String): Flow<List<TextEntity>> =
         projectDao.getTextsForProject(projectId)
 
     suspend fun insertText(text: TextEntity) {
         projectDao.insertText(text)
-        // Optionally update project's updatedAt
         val project = projectDao.getProjectById(text.projectId).firstOrNull()
         if (project != null) {
             updateProject(project)
@@ -102,16 +110,15 @@ class ProjectRepository(
     }
 
     suspend fun deleteTextById(id: String) {
-        // We need the projectId to update the project's timestamp.
-        // We'll fetch the text first, but to keep it simple we'll just delete.
-        // If you want to update project timestamp, you'd need to fetch projectId.
-        // For now, just delete.
         projectDao.deleteTextById(id)
-        // Optionally update the project timestamp if you have the projectId.
-        // You can pass projectId as a parameter if needed.
+        // Note: To update project timestamp, you'd need to fetch projectId first.
+        // For simplicity, we skip that here.
     }
 
-    // ---- Sync (private) ----
+    // ============================================================
+    //  PRIVATE HELPERS
+    // ============================================================
+
     private suspend fun syncToFirestore(project: ProjectEntity) {
         if (!isFirebaseAvailable) return
         try {
