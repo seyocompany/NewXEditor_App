@@ -1,18 +1,14 @@
-package com.example.data.room
+@Query("SELECT * FROM texts WHERE projectId = :projectId ORDER BY orderIndex ASC")
+fun getTextsForProject(projectId: String): Flow<List<TextEntity>>
 
-import androidx.room.Entity
-import androidx.room.PrimaryKey
-import java.util.UUID
+@Insert(onConflict = OnConflictStrategy.REPLACE)
+suspend fun insertText(text: TextEntity)
 
-@Entity(tableName = "projects")
-data class ProjectEntity(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
-    val name: String,
-    val thumbnailUri: String? = null,
-    val audioUri: String? = null,
-    val audioVolume: Float = 0.5f,
-    val audioStartTimeMs: Long = 0L,
-    val audioEndTimeMs: Long = -1L,
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
-)
+@Update
+suspend fun updateText(text: TextEntity)
+
+@Query("DELETE FROM texts WHERE id = :id")
+suspend fun deleteTextById(id: String)
+
+@Query("DELETE FROM texts WHERE projectId = :projectId")
+suspend fun deleteTextsForProject(projectId: String)
