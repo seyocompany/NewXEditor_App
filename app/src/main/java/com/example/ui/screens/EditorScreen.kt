@@ -15,13 +15,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -110,6 +115,140 @@ private fun getEffectsForClip(clip: ClipEntity): List<androidx.media3.common.Eff
     }
     
     return effects
+}
+
+private enum class AdjustType(
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val range: ClosedFloatingPointRange<Float>
+) {
+    LIGHTNESS("Lightness", Icons.Default.WbSunny, -1f..1f),
+    CONTRAST("Contrast", Icons.Default.Tonality, -1f..1f),
+    SATURATION("Saturation", Icons.Default.WaterDrop, -100f..100f)
+}
+
+@Composable
+fun AdjustPanel(
+    clip: ClipEntity,
+    exoPlayer: ExoPlayer,
+    getEffectsForClip: (ClipEntity) -> List<androidx.media3.common.Effect>,
+    onDone: (ClipEntity) -> Unit,
+    onCancel: () -> Unit
+) {
+    var brightness by remember { mutableStateOf(clip.brightness) }
+    var contrast by remember { mutableStateOf(clip.contrast) }
+    var saturation by remember { mutableStateOf(clip.saturation) }
+    var selected by remember { mutableStateOf(AdjustType.LIGHTNESS) }
+
+    LaunchedEffect(brightness, contrast, saturation) {
+        val effects = getEffectsForClip(clip).toMutableList()
+        effects.removeAll {
+            it is androidx.media3.effect.Brightness ||
+            it is androidx.media3.effect.Contrast ||
+            it is androidx.media3.effect.HslAdjustment
+        }
+        if (brightness != 0f) {
+            effects.add(androidx.media3.effect.Brightness(brightness))
+        }
+        if (contrast != 0f) {
+            effects.add(androidx.media3.effect.Contrast(contrast))
+        }
+        if (saturation != 0f) {
+            effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(saturation).build())
+        }
+        exoPlayer.setVideoEffects(effects)
+    }
+
+    val currentValue = when (selected) {
+        AdjustType.LIGHTNESS -> brightness
+        AdjustType.CONTRAST -> contrast
+        AdjustType.SATURATION -> saturation
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(vertical = 8.dp)
+    ) {
+        // Top row: cancel (X) - category label - done (check)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Default.Close, contentDescription = "Cancel")
+            }
+            Text(
+                text = "${selected.label}: ${"%.2f".format(currentValue)}",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            IconButton(onClick = {
+                onDone(clip.copy(brightness = brightness, contrast = contrast, saturation = saturation))
+            }) {
+                Icon(Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        // One shared slider - controls whichever category is currently selected below
+        Slider(
+            value = currentValue,
+            onValueChange = { newValue ->
+                when (selected) {
+                    AdjustType.LIGHTNESS -> brightness = newValue
+                    AdjustType.CONTRAST -> contrast = newValue
+                    AdjustType.SATURATION -> saturation = newValue
+                }
+            },
+            valueRange = selected.range,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        )
+
+        // Icon row - tap a category to make the slider above control it
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(28.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+        ) {
+            items(AdjustType.values()) { type ->
+                val isSelected = type == selected
+                val tintColor = if (isSelected) MaterialTheme.colorScheme.primary
+                                 else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .clickable { selected = type }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = type.icon,
+                        contentDescription = type.label,
+                        tint = tintColor,
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(text = type.label, fontSize = 10.sp, color = tintColor)
+                    Spacer(Modifier.height(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(4.dp)
+                            .background(
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                shape = CircleShape
+                            )
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1097,112 +1236,52 @@ fun EditorScreen(
 
                 // Contextual Toolbar
                 Divider(color = MaterialTheme.colorScheme.outline)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.background)
-                        .padding(vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    ToolbarItem(icon = Icons.Default.Tune, label = "ADJUST", tint = MaterialTheme.colorScheme.primary, onClick = {
-                        if (selectedClip != null) showAdjustDialog = true
-                    })
-                    ToolbarItem(icon = Icons.Default.Crop, label = "TRANSFORM", onClick = {
-                        if (selectedClip != null) showTransformDialog = true
-                    })
-                    ToolbarItem(icon = Icons.Default.GraphicEq, label = "AUDIO", onClick = {
-                        showAudioDialog = true
-                    })
-                    ToolbarItem(icon = Icons.Default.TextFields, label = "TEXT")
-                    ToolbarItem(icon = Icons.Default.AutoAwesome, label = "EFFECTS")
-                    ToolbarItem(icon = Icons.Default.Layers, label = "LAYER")
-                    ToolbarItem(icon = Icons.Default.ContentCut, label = "TRIM", onClick = {
-                        Toast.makeText(context, "Trim directly on the timeline by dragging clip edges!", Toast.LENGTH_LONG).show()
-                    })
+                if (showAdjustDialog && selectedClip != null) {
+                    AdjustPanel(
+                        clip = selectedClip!!,
+                        exoPlayer = exoPlayer,
+                        getEffectsForClip = { c -> getEffectsForClip(c) },
+                        onDone = { updatedClip ->
+                            viewModel.updateClip(updatedClip)
+                            showAdjustDialog = false
+                        },
+                        onCancel = {
+                            showAdjustDialog = false
+                            exoPlayer.setVideoEffects(getEffectsForClip(selectedClip!!))
+                        }
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.background)
+                            .padding(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceAround,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        ToolbarItem(icon = Icons.Default.Tune, label = "ADJUST", tint = MaterialTheme.colorScheme.primary, onClick = {
+                            if (selectedClip != null) showAdjustDialog = true
+                        })
+                        ToolbarItem(icon = Icons.Default.Crop, label = "TRANSFORM", onClick = {
+                            if (selectedClip != null) showTransformDialog = true
+                        })
+                        ToolbarItem(icon = Icons.Default.GraphicEq, label = "AUDIO", onClick = {
+                            showAudioDialog = true
+                        })
+                        ToolbarItem(icon = Icons.Default.TextFields, label = "TEXT")
+                        ToolbarItem(icon = Icons.Default.AutoAwesome, label = "EFFECTS")
+                        ToolbarItem(icon = Icons.Default.Layers, label = "LAYER")
+                        ToolbarItem(icon = Icons.Default.ContentCut, label = "TRIM", onClick = {
+                            Toast.makeText(context, "Trim directly on the timeline by dragging clip edges!", Toast.LENGTH_LONG).show()
+                        })
+                    }
                 }
             }
         }
     }
 
-    if (showAdjustDialog && selectedClip != null) {
-        val clip = selectedClip!!
-        var brightness by remember { mutableStateOf(clip.brightness) }
-        var contrast by remember { mutableStateOf(clip.contrast) }
-        var saturation by remember { mutableStateOf(clip.saturation) }
-        
-        LaunchedEffect(brightness, contrast, saturation) {
-            val effects = getEffectsForClip(clip).toMutableList()
-            // Remove existing brightness, contrast, saturation effects so we can override them
-            effects.removeAll { 
-                it is androidx.media3.effect.Brightness || 
-                it is androidx.media3.effect.Contrast || 
-                it is androidx.media3.effect.HslAdjustment 
-            }
-            if (brightness != 0f) {
-                effects.add(androidx.media3.effect.Brightness(brightness))
-            }
-            if (contrast != 0f) {
-                effects.add(androidx.media3.effect.Contrast(contrast))
-            }
-            if (saturation != 0f) {
-                effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(saturation).build())
-            }
-            exoPlayer.setVideoEffects(effects)
-        }
-        
-        AlertDialog(
-            onDismissRequest = { 
-                showAdjustDialog = false 
-                exoPlayer.setVideoEffects(getEffectsForClip(clip))
-            },
-            title = { Text("Adjust", fontSize = 18.sp) },
-            text = {
-                Column {
-                    Text("Brightness: ${"%.2f".format(brightness)}")
-                    Slider(
-                        value = brightness,
-                        onValueChange = { brightness = it },
-                        valueRange = -1f..1f
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text("Contrast: ${"%.2f".format(contrast)}")
-                    Slider(
-                        value = contrast,
-                        onValueChange = { contrast = it },
-                        valueRange = -1f..1f
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text("Saturation: ${"%.0f".format(saturation)}")
-                    Slider(
-                        value = saturation,
-                        onValueChange = { saturation = it },
-                        valueRange = -100f..100f
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { 
-                    viewModel.updateClip(clip.copy(
-                        brightness = brightness,
-                        contrast = contrast,
-                        saturation = saturation
-                    ))
-                    showAdjustDialog = false 
-                }) { 
-                    Text("Save") 
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { 
-                    showAdjustDialog = false 
-                    exoPlayer.setVideoEffects(getEffectsForClip(clip))
-                }) { 
-                    Text("Cancel") 
-                }
-            }
-        )
-    }
+    // Adjust is now rendered inline via AdjustPanel() above, in the contextual toolbar area.
+
 
     if (showTransformDialog && selectedClip != null) {
         val clip = selectedClip!!
