@@ -23,16 +23,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorMatrix
-import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,12 +83,12 @@ fun buildEffectsForClip(clip: ClipEntity): List<Effect> {
         )
     }
 
-    // 3. Color Adjustments (Brightness, Contrast, Saturation, Warmth, Fade, Sharpen)
+    // 3. Color Adjustments (Brightness, Contrast, Saturation, Warmth, Fade)
     val matrix = floatArrayOf(
-        1f, 0f, 0f, 0f, clip.brightness,  // R
-        0f, 1f, 0f, 0f, clip.brightness,  // G
-        0f, 0f, 1f, 0f, clip.brightness,  // B
-        0f, 0f, 0f, 1f, 0f                // A
+        1f, 0f, 0f, 0f, clip.brightness,
+        0f, 1f, 0f, 0f, clip.brightness,
+        0f, 0f, 1f, 0f, clip.brightness,
+        0f, 0f, 0f, 1f, 0f
     )
     // Contrast
     if (clip.contrast != 0f) {
@@ -123,24 +119,17 @@ fun buildEffectsForClip(clip: ClipEntity): List<Effect> {
     // Warmth (tint)
     if (clip.warmth != 0f) {
         val warm = clip.warmth
-        matrix[0] += warm * 0.3f  // more red
-        matrix[2] -= warm * 0.3f  // less blue
+        matrix[0] += warm * 0.3f
+        matrix[2] -= warm * 0.3f
     }
-    // Fade (black/white)
+    // Fade
     if (clip.fade > 0f) {
         val f = clip.fade
         for (i in 0..2) {
             matrix[i * 5 + 4] = matrix[i * 5 + 4] * (1 - f) + 0.5f * f
         }
     }
-    // Sharpen – we use a separate effect
-    if (clip.sharpen > 0f) {
-        // Media3 doesn't have sharpening built-in, we'll add a simple convolution later
-        // For now, just log it
-        Log.d("Editor", "Sharpen ${clip.sharpen} – custom implementation needed")
-    }
 
-    // Apply the color matrix if any adjustments are active
     val isAdjustActive = clip.brightness != 0f || clip.contrast != 0f || clip.saturation != 0f ||
             clip.warmth != 0f || clip.fade > 0f
     if (isAdjustActive) {
@@ -157,7 +146,7 @@ fun buildEffectsForClip(clip: ClipEntity): List<Effect> {
     return effects
 }
 
-// ---------- FILTER PRESETS (Color matrices) ----------
+// ---------- FILTER PRESETS ----------
 private fun getFilterMatrix(name: String): FloatArray? {
     return when (name) {
         "vintage" -> floatArrayOf(
@@ -206,7 +195,7 @@ private fun getFilterMatrix(name: String): FloatArray? {
     }
 }
 
-// ---------- CAPCUT-STYLE EDITOR SCREEN ----------
+// ---------- MAIN EDITOR SCREEN ----------
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
@@ -261,7 +250,6 @@ fun EditorScreen(
         }
     }
 
-    // Clip list + effects
     LaunchedEffect(uiState.clips) {
         exoPlayer.clearMediaItems()
         uiState.clips.forEach { clip ->
@@ -271,7 +259,6 @@ fun EditorScreen(
         updateCurrentClipEffects(exoPlayer, uiState.clips, exoPlayer.currentMediaItemIndex)
     }
 
-    // Listener for sync
     DisposableEffect(exoPlayer, audioPlayer, uiState.clips, uiState.project) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -424,7 +411,6 @@ fun EditorScreen(
                                         shape = RoundedCornerShape(4.dp)
                                     )
                             ) {
-                                // Thumbnail placeholder
                                 Text("${clip.orderIndex+1}", modifier = Modifier.align(Alignment.Center), color = Color.White)
                             }
                         }
@@ -495,7 +481,7 @@ fun TextOverlay(textEntity: TextEntity, modifier: Modifier = Modifier) {
                 textSize = textEntity.fontSize * density
                 textAlign = Paint.Align.CENTER
                 isAntiAlias = true
-                typeface = FontFamily.Default.toTypeface()
+                typeface = android.graphics.Typeface.DEFAULT
             }
             val x = size.width * textEntity.positionX
             val y = size.height * textEntity.positionY - paint.descent() / 2
@@ -522,7 +508,9 @@ fun getClipDuration(clip: ClipEntity, context: android.content.Context): Long {
     } catch (e: Exception) { 5000L }
 }
 
-// ---------- BOTTOM SHEETS ----------
+// ============================================================
+//  BOTTOM SHEETS
+// ============================================================
 
 // 1. ADJUST
 @Composable
@@ -630,7 +618,6 @@ fun TrimBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: 
 
     LaunchedEffect(start, end) {
         val testClip = clip.copy(startTimeMs = start.toLong(), endTimeMs = if (end >= duration) -1L else end.toLong())
-        // Update preview via seeking to start
         player.seekTo(uiState.clips.indexOf(clip), start.toLong())
     }
 
@@ -782,7 +769,7 @@ fun FilterChip(name: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-// ---------- EXPORT (with filters and text) ----------
+// ---------- EXPORT ----------
 fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewModel: EditorViewModel) {
     if (uiState.clips.isEmpty()) {
         Toast.makeText(context, "No clips to export", Toast.LENGTH_SHORT).show()
@@ -810,11 +797,9 @@ fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewMo
             .build()
     }
 
-    // Build video sequence
     val videoSequence = EditedMediaItemSequence(editedMediaItems)
-
-    // Build audio sequence
     var composition = Composition.Builder(videoSequence).build()
+
     project.audioUri?.let { audioUri ->
         val clipping = MediaItem.ClippingConfiguration.Builder()
             .setStartPositionMs(project.audioStartTimeMs)
@@ -832,50 +817,10 @@ fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewMo
         composition = Composition.Builder(listOf(videoSequence, audioSequence)).build()
     }
 
-    // --- ADD TEXT OVERLAYS ---
-    // For each text, we need to render it as a bitmap overlay and apply it to the whole video.
-    // This is complex; we'll do a simplified version: overlay only if there are texts.
-    val textEntities = uiState.texts.filter { it.isVisible }
-    if (textEntities.isNotEmpty()) {
-        // We need to add an overlay effect to the entire composition.
-        // Transformer supports OverlayEffect. We'll create a bitmap for each text.
-        val overlayEffects = textEntities.map { text ->
-            val bitmap = renderTextToBitmap(context, text)
-            val overlay = OverlayEffect(
-                listOf(
-                    BitmapOverlay(
-                        bitmap,
-                        x = text.positionX,
-                        y = text.positionY,
-                        width = 0.3f, // relative width
-                        height = 0.1f,
-                        rotationDegrees = text.rotation
-                    )
-                )
-            )
-            overlay
-        }
-        // We'll add a global effect to the video track.
-        // For simplicity, we'll combine into one OverlayEffect.
-        val combinedOverlay = OverlayEffect(overlayEffects.flatMap { it.overlays })
-        // Apply to all clips: we need to add to each EditedMediaItem's effects.
-        // In a real app, you'd create a custom video effect that applies overlays.
-        // For now, we'll just use the first overlay on the first clip.
-        if (editedMediaItems.isNotEmpty()) {
-            val first = editedMediaItems.first()
-            val newEffects = first.effects.buildUpon()
-                .setVideoEffects(listOf(combinedOverlay))
-                .build()
-            // Rebuild the list (simplified, assumes only first clip gets overlay)
-            // For production, you'd apply to all.
-        }
-    }
-
     val outputFile = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "export_${System.currentTimeMillis()}.mp4")
     val transformer = Transformer.Builder(context)
         .addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, result: ExportResult) {
-                // Save to MediaStore
                 saveToGallery(context, outputFile)
                 outputFile.delete()
             }
@@ -885,21 +830,6 @@ fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewMo
         })
         .build()
     transformer.start(composition, outputFile.absolutePath)
-}
-
-fun renderTextToBitmap(context: android.content.Context, text: TextEntity): Bitmap {
-    val width = 500
-    val height = 100
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    val paint = Paint().apply {
-        color = text.color
-        textSize = text.fontSize
-        textAlign = Paint.Align.CENTER
-        isAntiAlias = true
-    }
-    canvas.drawText(text.text, width / 2f, height / 2f - paint.descent() / 2, paint)
-    return bitmap
 }
 
 fun saveToGallery(context: android.content.Context, file: File) {

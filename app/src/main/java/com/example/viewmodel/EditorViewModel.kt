@@ -1,12 +1,12 @@
 package com.example.viewmodel
 
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ProjectRepository
 import com.example.data.room.ClipEntity
 import com.example.data.room.ProjectEntity
 import com.example.data.room.TextEntity
+import com.example.data.AiAssistant   // <-- added import
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,12 +19,9 @@ data class EditorUiState(
     val clips: List<ClipEntity> = emptyList(),
     val texts: List<TextEntity> = emptyList(),
     val isLoading: Boolean = true,
-
-    // UI panel states
     val selectedClipId: String? = null,
     val selectedTextId: String? = null,
     val activePanel: PanelType = PanelType.NONE,
-
     val aiSuggestion: String? = null,
     val isAiLoading: Boolean = false
 )
@@ -92,7 +89,7 @@ class EditorViewModel(
                 text = initialText,
                 orderIndex = _uiState.value.texts.size
             )
-            repository.insertText(text)
+            repository.insertText(text)   // now available
             _uiState.update { it.copy(selectedTextId = text.id) }
         }
     }
@@ -140,9 +137,4 @@ class EditorViewModel(
             _uiState.update { it.copy(aiSuggestion = response, isAiLoading = false) }
         }
     }
-
-    // ---- Repository passthrough for texts ----
-    suspend fun insertText(text: TextEntity) = repository.insertText(text)
-    suspend fun deleteTextById(id: String) = repository.deleteTextById(id)
-    suspend fun getTextsForProject(pid: String) = repository.getTextsForProject(pid).firstOrNull() ?: emptyList()
 }

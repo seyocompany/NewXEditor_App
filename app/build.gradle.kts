@@ -19,7 +19,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -64,7 +63,6 @@ android {
     testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
-// Secrets plugin – uses .env and .env.example
 secrets {
     propertiesFileName = ".env"
     defaultPropertiesFileName = ".env.example"
@@ -78,14 +76,13 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.firebase.bom))
 
-    // ------------- ADDED FOR CAPCUT-STYLE UI -------------
-    implementation("androidx.compose.material3:material3:1.3.0")   // explicit version
-    // ------------------------------------------------------
+    // Explicit material3 version for RangeSlider
+    implementation("androidx.compose.material3:material3:1.3.0")
 
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material.icons.extended)
-    implementation(libs.androidx.compose.material3)              // from catalog (same as above)
+    implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)

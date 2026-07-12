@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.room.ProjectEntity   // <-- FIX: added import
 import com.example.viewmodel.HomeViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,7 +54,7 @@ fun HomeScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(projects) { proj ->
+                items(projects) { proj ->   // now proj is ProjectEntity
                     Card(
                         modifier = Modifier.fillMaxWidth().clickable { onNavigateToEditor(proj.id) },
                         elevation = CardDefaults.cardElevation(4.dp)
