@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.example.ui.screens
 
 import android.graphics.Bitmap
@@ -38,9 +39,12 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.effect.*
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.media3.common.Effect
 import androidx.media3.transformer.*
 import androidx.media3.ui.PlayerView
 import com.example.data.room.ClipEntity
+import com.example.viewmodel.EditorUiState
 import com.example.data.room.TextEntity
 import com.example.ui.theme.TimelineBg
 import com.example.viewmodel.EditorViewModel
@@ -50,6 +54,36 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+fun createRgbMatrixFrom4x5(m5x4: FloatArray): RgbMatrix {
+    val glMatrix = FloatArray(16)
+    // Column 0
+    glMatrix[0] = m5x4[0]
+    glMatrix[1] = m5x4[5]
+    glMatrix[2] = m5x4[10]
+    glMatrix[3] = m5x4[15]
+    // Column 1
+    glMatrix[4] = m5x4[1]
+    glMatrix[5] = m5x4[6]
+    glMatrix[6] = m5x4[11]
+    glMatrix[7] = m5x4[16]
+    // Column 2
+    glMatrix[8] = m5x4[2]
+    glMatrix[9] = m5x4[7]
+    glMatrix[10] = m5x4[12]
+    glMatrix[11] = m5x4[17]
+    // Column 3 (offset column)
+    glMatrix[12] = m5x4[4]
+    glMatrix[13] = m5x4[9]
+    glMatrix[14] = m5x4[14]
+    glMatrix[15] = m5x4[19]
+
+    return object : RgbMatrix {
+        override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray {
+            return glMatrix
+        }
+    }
+}
 
 // ---------- HELPER: Build effects for a clip ----------
 fun buildEffectsForClip(clip: ClipEntity): List<Effect> {
@@ -133,13 +167,13 @@ fun buildEffectsForClip(clip: ClipEntity): List<Effect> {
     val isAdjustActive = clip.brightness != 0f || clip.contrast != 0f || clip.saturation != 0f ||
             clip.warmth != 0f || clip.fade > 0f
     if (isAdjustActive) {
-        effects.add(RgbFilter(matrix))
+        effects.add(createRgbMatrixFrom4x5(matrix))
     }
 
     // 4. Preset Filter (LUT via color matrix)
     clip.filterName?.let { filter ->
         getFilterMatrix(filter)?.let { mat ->
-            effects.add(RgbFilter(mat))
+            effects.add(createRgbMatrixFrom4x5(mat))
         }
     }
 
@@ -261,10 +295,10 @@ fun EditorScreen(
 
     DisposableEffect(exoPlayer, audioPlayer, uiState.clips, uiState.project) {
         val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                isPlaying = isPlaying
+            override fun onIsPlayingChanged(playing: Boolean) {
+                isPlaying = playing
                 if (uiState.project?.audioUri != null) {
-                    if (isPlaying) { audioPlayer.seekTo(exoPlayer.currentPosition); audioPlayer.play() }
+                    if (playing) { audioPlayer.seekTo(exoPlayer.currentPosition); audioPlayer.play() }
                     else audioPlayer.pause()
                 }
             }
@@ -515,8 +549,8 @@ fun getClipDuration(clip: ClipEntity, context: android.content.Context): Long {
 // 1. ADJUST
 @Composable
 fun AdjustBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: ExoPlayer) {
-    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return
-    var clip by remember { mutableStateOf(uiState.clips.find { it.id == clipId } ?: return) }
+    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return@AdjustBottomSheet
+    val clip = uiState.clips.find { it.id == clipId } ?: return@AdjustBottomSheet
 
     val brightness = remember { mutableFloatStateOf(clip.brightness) }
     val contrast = remember { mutableFloatStateOf(clip.contrast) }
@@ -560,8 +594,8 @@ fun AdjustBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player
 // 2. CROP
 @Composable
 fun CropBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: ExoPlayer) {
-    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return
-    var clip by remember { mutableStateOf(uiState.clips.find { it.id == clipId } ?: return) }
+    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return@CropBottomSheet
+    val clip = uiState.clips.find { it.id == clipId } ?: return@CropBottomSheet
 
     var left by remember { mutableFloatStateOf(clip.cropRectString?.split(",")?.get(0)?.toFloatOrNull() ?: 0f) }
     var top by remember { mutableFloatStateOf(clip.cropRectString?.split(",")?.get(1)?.toFloatOrNull() ?: 0f) }
@@ -609,8 +643,8 @@ fun CropBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: 
 // 3. TRIM
 @Composable
 fun TrimBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: ExoPlayer, context: android.content.Context) {
-    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return
-    var clip by remember { mutableStateOf(uiState.clips.find { it.id == clipId } ?: return) }
+    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return@TrimBottomSheet
+    val clip = uiState.clips.find { it.id == clipId } ?: return@TrimBottomSheet
     val duration = getClipDuration(clip, context)
 
     var start by remember { mutableFloatStateOf(clip.startTimeMs.toFloat()) }
@@ -624,7 +658,7 @@ fun TrimBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: 
     ModalBottomSheet(onDismissRequest = { viewModel.closePanel() }) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text("Trim", style = MaterialTheme.typography.titleLarge, color = Color.White)
-            Text("Start: ${start.toInt()}ms  End: ${if (end >= duration) "End" else end.toInt() + "ms"}", color = Color.White)
+            Text("Start: ${start.toInt()}ms  End: ${if (end >= duration) "End" else "${end.toInt()}ms"}", color = Color.White)
             RangeSlider(
                 value = start..end,
                 onValueChange = { range -> start = range.start; end = range.endInclusive },
@@ -643,8 +677,8 @@ fun TrimBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: 
 // 4. FILTER
 @Composable
 fun FilterBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState, player: ExoPlayer) {
-    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return
-    var clip by remember { mutableStateOf(uiState.clips.find { it.id == clipId } ?: return) }
+    val clipId = uiState.selectedClipId ?: uiState.clips.firstOrNull()?.id ?: return@FilterBottomSheet
+    val clip = uiState.clips.find { it.id == clipId } ?: return@FilterBottomSheet
 
     val filters = listOf("None", "vintage", "bw", "vivid", "cool", "warm", "sepia", "glitch")
 
@@ -679,13 +713,15 @@ fun TextBottomSheet(viewModel: EditorViewModel, uiState: EditorUiState) {
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(uiState.texts) { text ->
-                    Chip(
+                    AssistChip(
                         onClick = { editingText = text; tempText = text.text; tempColor = Color(text.color); tempSize = text.fontSize },
                         label = { Text(text.text.take(8)) }
                     )
                 }
-                Button(onClick = { viewModel.addText(uiState.project?.id ?: return@Button) }) {
-                    Icon(Icons.Default.Add, null)
+                item {
+                    Button(onClick = { viewModel.addText(uiState.project?.id ?: return@Button) }) {
+                        Icon(Icons.Default.Add, null)
+                    }
                 }
             }
 
@@ -762,11 +798,18 @@ fun AspectChip(label: String, onClick: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilterChip(name: String, selected: Boolean, onClick: () -> Unit) {
-    Chip(onClick = onClick, colors = ChipDefaults.chipColors(containerColor = if (selected) MaterialTheme.colorScheme.primary else Color.DarkGray)) {
-        Text(name, color = Color.White)
-    }
+    androidx.compose.material3.FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(name, color = Color.White) },
+        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            containerColor = Color.DarkGray
+        )
+    )
 }
 
 // ---------- EXPORT ----------
@@ -789,7 +832,11 @@ fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewMo
 
         val effects = buildEffectsForClip(clip)
         val audioProcessors = if (clip.speed != 1f) {
-            listOf(androidx.media3.common.audio.SpeedChangingAudioProcessor { clip.speed })
+            val speedProvider = object : androidx.media3.common.audio.SpeedProvider {
+                override fun getSpeed(timeUs: Long): Float = clip.speed
+                override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = androidx.media3.common.C.TIME_UNSET
+            }
+            listOf(androidx.media3.common.audio.SpeedChangingAudioProcessor(speedProvider))
         } else emptyList()
 
         EditedMediaItem.Builder(mediaItem)
@@ -798,7 +845,7 @@ fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewMo
     }
 
     val videoSequence = EditedMediaItemSequence(editedMediaItems)
-    var composition = Composition.Builder(videoSequence).build()
+    var composition = androidx.media3.transformer.Composition.Builder(videoSequence).build()
 
     project.audioUri?.let { audioUri ->
         val clipping = MediaItem.ClippingConfiguration.Builder()
@@ -814,17 +861,17 @@ fun exportVideo(context: android.content.Context, uiState: EditorUiState, viewMo
             .setEffects(Effects(listOf(volumeProcessor), emptyList()))
             .build()
         val audioSequence = EditedMediaItemSequence(listOf(editedAudio))
-        composition = Composition.Builder(listOf(videoSequence, audioSequence)).build()
+        composition = androidx.media3.transformer.Composition.Builder(listOf(videoSequence, audioSequence)).build()
     }
 
     val outputFile = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "export_${System.currentTimeMillis()}.mp4")
     val transformer = Transformer.Builder(context)
         .addListener(object : Transformer.Listener {
-            override fun onCompleted(composition: Composition, result: ExportResult) {
+            override fun onCompleted(composition: androidx.media3.transformer.Composition, result: ExportResult) {
                 saveToGallery(context, outputFile)
                 outputFile.delete()
             }
-            override fun onError(composition: Composition, result: ExportResult, exception: ExportException) {
+            override fun onError(composition: androidx.media3.transformer.Composition, result: ExportResult, exception: ExportException) {
                 Toast.makeText(context, "Export failed: ${exception.message}", Toast.LENGTH_LONG).show()
             }
         })

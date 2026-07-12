@@ -9,11 +9,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ProjectDao {
-
-    // ============================================================
-    //  PROJECT OPERATIONS
-    // ============================================================
-
+    // Projects
     @Query("SELECT * FROM projects ORDER BY updatedAt DESC")
     fun getAllProjects(): Flow<List<ProjectEntity>>
 
@@ -29,10 +25,7 @@ interface ProjectDao {
     @Query("DELETE FROM projects WHERE id = :id")
     suspend fun deleteProjectById(id: String)
 
-    // ============================================================
-    //  CLIP OPERATIONS
-    // ============================================================
-
+    // Clips
     @Query("SELECT * FROM clips WHERE projectId = :projectId ORDER BY orderIndex ASC")
     fun getClipsForProject(projectId: String): Flow<List<ClipEntity>>
 
@@ -51,10 +44,7 @@ interface ProjectDao {
     @Query("DELETE FROM clips WHERE projectId = :projectId")
     suspend fun deleteClipsForProject(projectId: String)
 
-    // ============================================================
-    //  TEXT OVERLAY OPERATIONS  (NEW for CapCut-style text)
-    // ============================================================
-
+    // Texts
     @Query("SELECT * FROM texts WHERE projectId = :projectId ORDER BY orderIndex ASC")
     fun getTextsForProject(projectId: String): Flow<List<TextEntity>>
 
