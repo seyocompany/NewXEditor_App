@@ -57,6 +57,7 @@ import java.io.File
 import com.example.ui.theme.TimelineBg
 import com.example.viewmodel.EditorViewModel
 import com.example.data.room.ClipEntity
+import com.example.data.room.ProjectEntity
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import androidx.compose.ui.graphics.asImageBitmap
@@ -551,8 +552,93 @@ fun EditorScreen(
     var isExporting by remember { mutableStateOf(false) }
     val exportScope = rememberCoroutineScope()
 
+    // Hoisted Transform state - shared between the crop overlay drawn on the main
+    // preview and the rotate/flip/speed controls drawn in the bottom panel.
+    var transformLeft by remember { mutableStateOf(0f) }
+    var transformTop by remember { mutableStateOf(0f) }
+    var transformRight by remember { mutableStateOf(1f) }
+    var transformBottom by remember { mutableStateOf(1f) }
+    var transformRotation by remember { mutableStateOf(0) }
+    var transformFlipH by remember { mutableStateOf(false) }
+    var transformFlipV by remember { mutableStateOf(false) }
+    var transformSpeed by remember { mutableStateOf(1f) }
+
+    LaunchedEffect(showTransformDialog, selectedClip) {
+        val clip = selectedClip
+        if (showTransformDialog && clip != null) {
+            val cropStr = clip.cropRectString
+            if (!cropStr.isNullOrEmpty()) {
+                val parts = cropStr.split(",")
+                if (parts.size == 4) {
+                    transformLeft = parts[0].toFloatOrNull() ?: 0f
+                    transformTop = parts[1].toFloatOrNull() ?: 0f
+                    transformRight = parts[2].toFloatOrNull() ?: 1f
+                    transformBottom = parts[3].toFloatOrNull() ?: 1f
+                }
+            } else {
+                transformLeft = 0f
+                transformTop = 0f
+                transformRight = 1f
+                transformBottom = 1f
+            }
+            transformRotation = clip.rotationDegrees
+            transformFlipH = clip.flipHorizontal
+            transformFlipV = clip.flipVertical
+            transformSpeed = clip.speed
+        }
+    }
+
+    LaunchedEffect(showTransformDialog, transformLeft, transformTop, transformRight, transformBottom, transformRotation, transformFlipH, transformFlipV) {
+        val clip = selectedClip
+        if (showTransformDialog && clip != null) {
+            val effects = mutableListOf<androidx.media3.common.Effect>()
+            if (transformLeft > 0f || transformTop > 0f || transformRight < 1f || transformBottom < 1f) {
+                val ndcLeft = -1f + 2f * transformLeft
+                val ndcRight = -1f + 2f * transformRight
+                val ndcBottom = 1f - 2f * transformBottom
+                val ndcTop = 1f - 2f * transformTop
+                effects.add(androidx.media3.effect.Crop(ndcLeft, ndcRight, ndcBottom, ndcTop))
+            }
+            if (transformRotation != 0 || transformFlipH || transformFlipV) {
+                val scaleX = if (transformFlipH) -1f else 1f
+                val scaleY = if (transformFlipV) -1f else 1f
+                effects.add(
+                    androidx.media3.effect.ScaleAndRotateTransformation.Builder()
+                        .setRotationDegrees(transformRotation.toFloat())
+                        .setScale(scaleX, scaleY)
+                        .build()
+                )
+            }
+            if (clip.brightness != 0f) effects.add(androidx.media3.effect.Brightness(clip.brightness))
+            if (clip.contrast != 0f) effects.add(androidx.media3.effect.Contrast(clip.contrast))
+            if (clip.saturation != 0f) effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
+            exoPlayer.setVideoEffects(effects)
+        }
+    }
+
+    LaunchedEffect(showTransformDialog, transformSpeed) {
+        if (showTransformDialog) {
+            exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(transformSpeed))
+        }
+    }
+
+    // Hoisted Trim-panel state - drives the RangeSlider in the dedicated Trim panel.
+    // This is independent of, and in addition to, dragging the handles directly on the timeline.
+    var trimPanelStart by remember { mutableStateOf(0L) }
+    var trimPanelEnd by remember { mutableStateOf(0L) }
+
     val thumbnails = remember { mutableStateMapOf<String, List<Bitmap>>() }
     val clipDurations = remember { mutableStateMapOf<String, Long>() }
+
+    LaunchedEffect(showTrimDialog, selectedClip) {
+        val clip = selectedClip
+        if (showTrimDialog && clip != null) {
+            val realDur = clipDurations[clip.id] ?: 5000L
+            trimPanelStart = clip.startTimeMs
+            trimPanelEnd = if (clip.endTimeMs > 0) clip.endTimeMs else realDur
+        }
+    }
+
     var currentPositionMs by remember { mutableStateOf(0L) }
     val localDensity = LocalDensity.current
     val density = localDensity.density
@@ -899,6 +985,23 @@ fun EditorScreen(
                 ) {
                     Text("1080p | 30fps", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = Color.White)
                 }
+
+                // Crop handles drawn directly on the main preview while the Transform panel is open
+                if (showTransformDialog && selectedClip != null) {
+                    CropOverlay(
+                        left = transformLeft,
+                        top = transformTop,
+                        right = transformRight,
+                        bottom = transformBottom,
+                        onCropChanged = { newL, newT, newR, newB ->
+                            transformLeft = newL
+                            transformTop = newT
+                            transformRight = newR
+                            transformBottom = newB
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
             
             // Timeline Area
@@ -1236,44 +1339,128 @@ fun EditorScreen(
 
                 // Contextual Toolbar
                 Divider(color = MaterialTheme.colorScheme.outline)
-                if (showAdjustDialog && selectedClip != null) {
-                    AdjustPanel(
-                        clip = selectedClip!!,
-                        exoPlayer = exoPlayer,
-                        getEffectsForClip = { c -> getEffectsForClip(c) },
-                        onDone = { updatedClip ->
-                            viewModel.updateClip(updatedClip)
-                            showAdjustDialog = false
-                        },
-                        onCancel = {
-                            showAdjustDialog = false
-                            exoPlayer.setVideoEffects(getEffectsForClip(selectedClip!!))
+                when {
+                    showAdjustDialog && selectedClip != null -> {
+                        AdjustPanel(
+                            clip = selectedClip!!,
+                            exoPlayer = exoPlayer,
+                            getEffectsForClip = { c -> getEffectsForClip(c) },
+                            onDone = { updatedClip ->
+                                viewModel.updateClip(updatedClip)
+                                showAdjustDialog = false
+                            },
+                            onCancel = {
+                                showAdjustDialog = false
+                                exoPlayer.setVideoEffects(getEffectsForClip(selectedClip!!))
+                            }
+                        )
+                    }
+                    showTransformDialog && selectedClip != null -> {
+                        TransformPanel(
+                            rotation = transformRotation,
+                            flipH = transformFlipH,
+                            flipV = transformFlipV,
+                            speed = transformSpeed,
+                            onRotate = { transformRotation = (transformRotation + 90) % 360 },
+                            onFlipHChange = { transformFlipH = it },
+                            onFlipVChange = { transformFlipV = it },
+                            onSpeedChange = { transformSpeed = it },
+                            onResetCrop = {
+                                transformLeft = 0f
+                                transformTop = 0f
+                                transformRight = 1f
+                                transformBottom = 1f
+                            },
+                            onDone = {
+                                val clip = selectedClip!!
+                                val cropStr = "$transformLeft,$transformTop,$transformRight,$transformBottom"
+                                viewModel.updateClip(clip.copy(
+                                    cropRectString = if (transformLeft == 0f && transformTop == 0f && transformRight == 1f && transformBottom == 1f) null else cropStr,
+                                    rotationDegrees = transformRotation,
+                                    flipHorizontal = transformFlipH,
+                                    flipVertical = transformFlipV,
+                                    speed = transformSpeed
+                                ))
+                                showTransformDialog = false
+                                playerTrigger++
+                            },
+                            onCancel = {
+                                showTransformDialog = false
+                                playerTrigger++
+                                val clip = selectedClip!!
+                                exoPlayer.setVideoEffects(getEffectsForClip(clip))
+                                exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
+                            }
+                        )
+                    }
+                    showTrimDialog && selectedClip != null -> {
+                        val clip = selectedClip!!
+                        val realDur = clipDurations[clip.id] ?: 5000L
+                        TrimPanel(
+                            startMs = trimPanelStart,
+                            endMs = trimPanelEnd,
+                            durationMs = realDur,
+                            onRangeChange = { newStart, newEnd ->
+                                trimPanelStart = newStart
+                                trimPanelEnd = newEnd
+                                exoPlayer.seekTo(newStart)
+                            },
+                            onDone = {
+                                viewModel.updateClip(clip.copy(
+                                    startTimeMs = trimPanelStart,
+                                    endTimeMs = if (trimPanelEnd >= realDur) -1L else trimPanelEnd
+                                ))
+                                showTrimDialog = false
+                            },
+                            onCancel = { showTrimDialog = false }
+                        )
+                    }
+                    showAudioDialog && uiState.project != null -> {
+                        AudioPanel(
+                            project = uiState.project!!,
+                            audioPlayer = audioPlayer,
+                            onPickFile = { audioPickerLauncher.launch("audio/*") },
+                            onRemove = {
+                                viewModel.updateProject(uiState.project!!.copy(audioUri = null))
+                                showAudioDialog = false
+                            },
+                            onDone = { volume, startMs, endMs ->
+                                viewModel.updateProject(uiState.project!!.copy(
+                                    audioVolume = volume,
+                                    audioStartTimeMs = startMs,
+                                    audioEndTimeMs = endMs
+                                ))
+                                showAudioDialog = false
+                            },
+                            onCancel = { showAudioDialog = false }
+                        )
+                    }
+                    else -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.background)
+                                .padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceAround,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ToolbarItem(icon = Icons.Default.Tune, label = "ADJUST", tint = MaterialTheme.colorScheme.primary, onClick = {
+                                if (selectedClip != null) showAdjustDialog = true
+                            })
+                            ToolbarItem(icon = Icons.Default.Crop, label = "TRANSFORM", onClick = {
+                                if (selectedClip != null) showTransformDialog = true
+                            })
+                            ToolbarItem(icon = Icons.Default.GraphicEq, label = "AUDIO", onClick = {
+                                showAudioDialog = true
+                            })
+                            ToolbarItem(icon = Icons.Default.TextFields, label = "TEXT")
+                            ToolbarItem(icon = Icons.Default.AutoAwesome, label = "EFFECTS")
+                            ToolbarItem(icon = Icons.Default.Layers, label = "LAYER")
+                            ToolbarItem(icon = Icons.Default.ContentCut, label = "TRIM", onClick = {
+                                if (selectedClip != null) showTrimDialog = true
+                                else Toast.makeText(context, "Select a clip first", Toast.LENGTH_SHORT).show()
+                            })
                         }
-                    )
-                } else {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.background)
-                            .padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceAround,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        ToolbarItem(icon = Icons.Default.Tune, label = "ADJUST", tint = MaterialTheme.colorScheme.primary, onClick = {
-                            if (selectedClip != null) showAdjustDialog = true
-                        })
-                        ToolbarItem(icon = Icons.Default.Crop, label = "TRANSFORM", onClick = {
-                            if (selectedClip != null) showTransformDialog = true
-                        })
-                        ToolbarItem(icon = Icons.Default.GraphicEq, label = "AUDIO", onClick = {
-                            showAudioDialog = true
-                        })
-                        ToolbarItem(icon = Icons.Default.TextFields, label = "TEXT")
-                        ToolbarItem(icon = Icons.Default.AutoAwesome, label = "EFFECTS")
-                        ToolbarItem(icon = Icons.Default.Layers, label = "LAYER")
-                        ToolbarItem(icon = Icons.Default.ContentCut, label = "TRIM", onClick = {
-                            Toast.makeText(context, "Trim directly on the timeline by dragging clip edges!", Toast.LENGTH_LONG).show()
-                        })
                     }
                 }
             }
@@ -1282,201 +1469,6 @@ fun EditorScreen(
 
     // Adjust is now rendered inline via AdjustPanel() above, in the contextual toolbar area.
 
-
-    if (showTransformDialog && selectedClip != null) {
-        val clip = selectedClip!!
-        var left by remember { mutableStateOf(0f) }
-        var top by remember { mutableStateOf(0f) }
-        var right by remember { mutableStateOf(1f) }
-        var bottom by remember { mutableStateOf(1f) }
-        
-        LaunchedEffect(clip) {
-            val cropStr = clip.cropRectString
-            if (!cropStr.isNullOrEmpty()) {
-                val parts = cropStr.split(",")
-                if (parts.size == 4) {
-                    left = parts[0].toFloatOrNull() ?: 0f
-                    top = parts[1].toFloatOrNull() ?: 0f
-                    right = parts[2].toFloatOrNull() ?: 1f
-                    bottom = parts[3].toFloatOrNull() ?: 1f
-                }
-            } else {
-                left = 0f
-                top = 0f
-                right = 1f
-                bottom = 1f
-            }
-        }
-        
-        var rotationDegrees by remember { mutableStateOf(clip.rotationDegrees) }
-        var flipHorizontal by remember { mutableStateOf(clip.flipHorizontal) }
-        var flipVertical by remember { mutableStateOf(clip.flipVertical) }
-        var speed by remember { mutableStateOf(clip.speed) }
-        
-        LaunchedEffect(left, top, right, bottom, rotationDegrees, flipHorizontal, flipVertical) {
-            val effects = mutableListOf<androidx.media3.common.Effect>()
-            if (left > 0f || top > 0f || right < 1f || bottom < 1f) {
-                val ndcLeft = -1f + 2f * left
-                val ndcRight = -1f + 2f * right
-                val ndcBottom = 1f - 2f * bottom
-                val ndcTop = 1f - 2f * top
-                effects.add(androidx.media3.effect.Crop(ndcLeft, ndcRight, ndcBottom, ndcTop))
-            }
-            if (rotationDegrees != 0 || flipHorizontal || flipVertical) {
-                val scaleX = if (flipHorizontal) -1f else 1f
-                val scaleY = if (flipVertical) -1f else 1f
-                effects.add(
-                    androidx.media3.effect.ScaleAndRotateTransformation.Builder()
-                        .setRotationDegrees(rotationDegrees.toFloat())
-                        .setScale(scaleX, scaleY)
-                        .build()
-                )
-            }
-            if (clip.brightness != 0f) effects.add(androidx.media3.effect.Brightness(clip.brightness))
-            if (clip.contrast != 0f) effects.add(androidx.media3.effect.Contrast(clip.contrast))
-            if (clip.saturation != 0f) effects.add(androidx.media3.effect.HslAdjustment.Builder().adjustSaturation(clip.saturation).build())
-            
-            exoPlayer.setVideoEffects(effects)
-        }
-        
-        LaunchedEffect(speed) {
-            exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(speed))
-        }
-        
-        AlertDialog(
-            onDismissRequest = { 
-                showTransformDialog = false
-                playerTrigger++
-                exoPlayer.setVideoEffects(getEffectsForClip(clip))
-                exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
-            },
-            title = { Text("Transform Clip", fontSize = 18.sp) },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .wrapContentHeight()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .background(Color.Black)
-                            .clip(RoundedCornerShape(8.dp))
-                    ) {
-                        AndroidView(
-                            factory = {
-                                PlayerView(context).apply {
-                                    player = exoPlayer
-                                    useController = false
-                                }
-                            },
-                            update = { playerView ->
-                                if (playerView.player != exoPlayer) {
-                                    playerView.player = exoPlayer
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                        
-                        CropOverlay(
-                            left = left,
-                            top = top,
-                            right = right,
-                            bottom = bottom,
-                            onCropChanged = { newL, newT, newR, newB ->
-                                left = newL
-                                top = newT
-                                right = newR
-                                bottom = newB
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                    
-                    Spacer(Modifier.height(12.dp))
-                    
-                    TextButton(
-                        onClick = {
-                            left = 0f
-                            top = 0f
-                            right = 1f
-                            bottom = 1f
-                        },
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text("Reset Crop", fontSize = 12.sp)
-                    }
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Button(
-                            onClick = { rotationDegrees = (rotationDegrees + 90) % 360 },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
-                        ) {
-                            Text("Rotate 90°", fontSize = 12.sp)
-                        }
-                        
-                        OutlinedIconToggleButton(
-                            checked = flipHorizontal,
-                            onCheckedChange = { flipHorizontal = it },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Flip H", fontSize = 12.sp, color = if (flipHorizontal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                        }
-                        
-                        OutlinedIconToggleButton(
-                            checked = flipVertical,
-                            onCheckedChange = { flipVertical = it },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text("Flip V", fontSize = 12.sp, color = if (flipVertical) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                    
-                    Spacer(Modifier.height(12.dp))
-                    
-                    Text("Playback Speed: ${"%.1f".format(speed)}x", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    Slider(
-                        value = speed,
-                        onValueChange = { speed = it },
-                        valueRange = 0.5f..2.0f,
-                        steps = 14
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { 
-                    val cropStr = "$left,$top,$right,$bottom"
-                    viewModel.updateClip(clip.copy(
-                        cropRectString = if (left == 0f && top == 0f && right == 1f && bottom == 1f) null else cropStr,
-                        rotationDegrees = rotationDegrees,
-                        flipHorizontal = flipHorizontal,
-                        flipVertical = flipVertical,
-                        speed = speed
-                    ))
-                    showTransformDialog = false
-                    playerTrigger++
-                }) { 
-                    Text("Save") 
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { 
-                    showTransformDialog = false
-                    playerTrigger++
-                    exoPlayer.setVideoEffects(getEffectsForClip(clip))
-                    exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
-                }) { 
-                    Text("Cancel") 
-                }
-            }
-        )
-    }
 
     if (showAiDialog) {
         AlertDialog(
@@ -1514,117 +1506,248 @@ fun EditorScreen(
         )
     }
 
-    if (showAudioDialog && uiState.project != null) {
-        val project = uiState.project!!
-        var audioVolume by remember { mutableStateOf(project.audioVolume) }
-        var audioStartMs by remember { mutableStateOf(project.audioStartTimeMs.toString()) }
-        var audioEndMs by remember { mutableStateOf(if (project.audioEndTimeMs > 0) project.audioEndTimeMs.toString() else "") }
-        
-        AlertDialog(
-            onDismissRequest = { showAudioDialog = false },
-            title = { Text("Background Music", fontSize = 18.sp) },
-            text = {
-                Column {
-                    if (project.audioUri == null) {
-                        Text("No background music added yet.", fontSize = 14.sp)
-                        Spacer(Modifier.height(16.dp))
-                        Button(
-                            onClick = {
-                                audioPickerLauncher.launch("audio/*")
-                            },
-                            modifier = Modifier.fillMaxWidth().testTag("choose_audio_file_button")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = "Add")
-                            Spacer(Modifier.width(8.dp))
-                            Text("Choose Audio File")
-                        }
-                    } else {
-                        Text("Selected: ${project.audioUri.substringAfterLast("/")}", fontSize = 12.sp, maxLines = 1)
-                        Spacer(Modifier.height(12.dp))
-                        
-                        Text("Volume: ${"%.0f%%".format(audioVolume * 100)}")
-                        Slider(
-                            value = audioVolume,
-                            onValueChange = { 
-                                audioVolume = it
-                                audioPlayer.volume = it
-                            },
-                            valueRange = 0f..1f,
-                            modifier = Modifier.testTag("audio_volume_slider")
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        
-                        OutlinedTextField(
-                            value = audioStartMs,
-                            onValueChange = { audioStartMs = it },
-                            label = { Text("Start position (ms)") },
-                            modifier = Modifier.fillMaxWidth().testTag("audio_start_input")
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        
-                        OutlinedTextField(
-                            value = audioEndMs,
-                            onValueChange = { audioEndMs = it },
-                            label = { Text("End position (ms, empty for end)") },
-                            modifier = Modifier.fillMaxWidth().testTag("audio_end_input")
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        
-                        Row(
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    audioPickerLauncher.launch("audio/*")
-                                },
-                                modifier = Modifier.testTag("change_audio_file_button")
-                            ) {
-                                Text("Change file")
-                            }
-                            
-                            TextButton(
-                                onClick = {
-                                    viewModel.updateProject(project.copy(audioUri = null))
-                                    showAudioDialog = false
-                                },
-                                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                                modifier = Modifier.testTag("remove_audio_button")
-                            ) {
-                                Text("Remove")
-                            }
-                        }
-                    }
-                }
+}
+
+@Composable
+fun TransformPanel(
+    rotation: Int,
+    flipH: Boolean,
+    flipV: Boolean,
+    speed: Float,
+    onRotate: () -> Unit,
+    onFlipHChange: (Boolean) -> Unit,
+    onFlipVChange: (Boolean) -> Unit,
+    onSpeedChange: (Float) -> Unit,
+    onResetCrop: () -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Default.Close, contentDescription = "Cancel")
+            }
+            Text("Transform", fontSize = 14.sp, color = MaterialTheme.colorScheme.onBackground)
+            IconButton(onClick = onDone) {
+                Icon(Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        Text(
+            text = "Drag the corners on the preview above to crop",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(
+                onClick = onRotate,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp)
+            ) {
+                Text("Rotate ${rotation}°", fontSize = 12.sp)
+            }
+            OutlinedIconToggleButton(checked = flipH, onCheckedChange = onFlipHChange, modifier = Modifier.weight(1f)) {
+                Text("Flip H", fontSize = 12.sp, color = if (flipH) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            }
+            OutlinedIconToggleButton(checked = flipV, onCheckedChange = onFlipVChange, modifier = Modifier.weight(1f)) {
+                Text("Flip V", fontSize = 12.sp, color = if (flipV) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+            }
+            TextButton(onClick = onResetCrop) {
+                Text("Reset", fontSize = 12.sp)
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "Speed: ${"%.1f".format(speed)}x",
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        Slider(
+            value = speed,
+            onValueChange = onSpeedChange,
+            valueRange = 0.5f..2.0f,
+            steps = 14,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+        )
+    }
+}
+
+@Composable
+fun TrimPanel(
+    startMs: Long,
+    endMs: Long,
+    durationMs: Long,
+    onRangeChange: (Long, Long) -> Unit,
+    onDone: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Default.Close, contentDescription = "Cancel")
+            }
+            Text("Trim", fontSize = 14.sp, color = MaterialTheme.colorScheme.onBackground)
+            IconButton(onClick = onDone) {
+                Icon(Icons.Default.Check, contentDescription = "Done", tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+
+        Text(
+            text = "Start: ${formatMs(startMs)}   End: ${formatMs(endMs)}   Length: ${formatMs(endMs - startMs)}",
+            fontSize = 12.sp,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+
+        val safeDuration = durationMs.coerceAtLeast(1000L)
+        RangeSlider(
+            value = startMs.toFloat()..endMs.toFloat(),
+            onValueChange = { range ->
+                val newStart = range.start.toLong().coerceIn(0L, safeDuration - 500L)
+                val newEnd = range.endInclusive.toLong().coerceIn(newStart + 500L, safeDuration)
+                onRangeChange(newStart, newEnd)
             },
-            confirmButton = {
-                if (project.audioUri != null) {
-                    TextButton(onClick = {
-                        val newStart = audioStartMs.toLongOrNull() ?: 0L
-                        val newEnd = audioEndMs.toLongOrNull() ?: -1L
-                        viewModel.updateProject(project.copy(
-                            audioVolume = audioVolume,
-                            audioStartTimeMs = newStart,
-                            audioEndTimeMs = newEnd
-                        ))
-                        showAudioDialog = false
-                    }, modifier = Modifier.testTag("save_audio_button")) {
-                        Text("Save")
-                    }
-                } else {
-                    TextButton(onClick = { showAudioDialog = false }) {
-                        Text("Close")
-                    }
+            valueRange = 0f..safeDuration.toFloat(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        )
+    }
+}
+
+@Composable
+fun AudioPanel(
+    project: ProjectEntity,
+    audioPlayer: ExoPlayer,
+    onPickFile: () -> Unit,
+    onRemove: () -> Unit,
+    onDone: (Float, Long, Long) -> Unit,
+    onCancel: () -> Unit
+) {
+    var audioVolume by remember { mutableStateOf(project.audioVolume) }
+    var audioStartMs by remember { mutableStateOf(project.audioStartTimeMs) }
+    var audioEndMs by remember {
+        mutableStateOf(if (project.audioEndTimeMs > 0) project.audioEndTimeMs else project.audioStartTimeMs + 30000L)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Default.Close, contentDescription = "Cancel")
+            }
+            Text("Music", fontSize = 14.sp, color = MaterialTheme.colorScheme.onBackground)
+            IconButton(
+                onClick = { onDone(audioVolume, audioStartMs, audioEndMs) },
+                enabled = project.audioUri != null
+            ) {
+                Icon(
+                    Icons.Default.Check,
+                    contentDescription = "Done",
+                    tint = if (project.audioUri != null) MaterialTheme.colorScheme.primary else Color.Gray
+                )
+            }
+        }
+
+        if (project.audioUri == null) {
+            Button(
+                onClick = onPickFile,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .testTag("choose_audio_file_button")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "Add")
+                Spacer(Modifier.width(8.dp))
+                Text("Choose Audio File")
+            }
+        } else {
+            Text(
+                text = "Selected: ${project.audioUri.substringAfterLast("/")}",
+                fontSize = 12.sp,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            Spacer(Modifier.height(4.dp))
+            Text("Volume: ${"%.0f%%".format(audioVolume * 100)}", fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp))
+            Slider(
+                value = audioVolume,
+                onValueChange = {
+                    audioVolume = it
+                    audioPlayer.volume = it
+                },
+                valueRange = 0f..1f,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .testTag("audio_volume_slider")
+            )
+            Text(
+                text = "Start: ${formatMs(audioStartMs)}   End: ${formatMs(audioEndMs)}",
+                fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            RangeSlider(
+                value = audioStartMs.toFloat()..audioEndMs.toFloat(),
+                onValueChange = { range ->
+                    audioStartMs = range.start.toLong().coerceAtLeast(0L)
+                    audioEndMs = range.endInclusive.toLong().coerceAtLeast(audioStartMs + 500L)
+                },
+                valueRange = 0f..600000f, // 10 minute window; adjust if your music files run longer
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            )
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                TextButton(onClick = onPickFile, modifier = Modifier.testTag("change_audio_file_button")) {
+                    Text("Change file")
                 }
-            },
-            dismissButton = {
-                if (project.audioUri != null) {
-                    TextButton(onClick = { showAudioDialog = false }, modifier = Modifier.testTag("cancel_audio_button")) {
-                        Text("Cancel")
-                    }
+                TextButton(
+                    onClick = onRemove,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("remove_audio_button")
+                ) {
+                    Text("Remove")
                 }
             }
-        )
+        }
     }
 }
 
