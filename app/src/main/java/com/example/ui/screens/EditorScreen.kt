@@ -408,6 +408,65 @@ fun CropOverlay(
     }
 }
 
+@Composable
+fun CropOverlayLocked(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    onPanChanged: (Float, Float, Float, Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val currentLeft = rememberUpdatedState(left)
+    val currentTop = rememberUpdatedState(top)
+    val currentRight = rememberUpdatedState(right)
+    val currentBottom = rememberUpdatedState(bottom)
+
+    BoxWithConstraints(modifier = modifier) {
+        val widthPx = constraints.maxWidth.toFloat()
+        val heightPx = constraints.maxHeight.toFloat()
+
+        if (widthPx > 0 && heightPx > 0) {
+            val leftPx = left * widthPx
+            val topPx = top * heightPx
+            val rightPx = right * widthPx
+            val bottomPx = bottom * heightPx
+
+            androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
+                val outerWidth = size.width
+                val outerHeight = size.height
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = androidx.compose.ui.geometry.Offset(0f, 0f), size = androidx.compose.ui.geometry.Size(outerWidth, topPx))
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = androidx.compose.ui.geometry.Offset(0f, bottomPx), size = androidx.compose.ui.geometry.Size(outerWidth, outerHeight - bottomPx))
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = androidx.compose.ui.geometry.Offset(0f, topPx), size = androidx.compose.ui.geometry.Size(leftPx, bottomPx - topPx))
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = androidx.compose.ui.geometry.Offset(rightPx, topPx), size = androidx.compose.ui.geometry.Size(outerWidth - rightPx, bottomPx - topPx))
+                drawRect(color = Color.White, topLeft = androidx.compose.ui.geometry.Offset(leftPx, topPx), size = androidx.compose.ui.geometry.Size(rightPx - leftPx, bottomPx - topPx), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
+            }
+
+            // The whole frame is draggable - moves as one fixed-shape block, doesn't resize
+            Box(
+                modifier = Modifier
+                    .offset(x = (leftPx / LocalDensity.current.density).dp, y = (topPx / LocalDensity.current.density).dp)
+                    .size(
+                        width = ((rightPx - leftPx) / LocalDensity.current.density).dp,
+                        height = ((bottomPx - topPx) / LocalDensity.current.density).dp
+                    )
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            val rectWidthFrac = currentRight.value - currentLeft.value
+                            val rectHeightFrac = currentBottom.value - currentTop.value
+                            val deltaFracX = dragAmount.x / widthPx
+                            val deltaFracY = dragAmount.y / heightPx
+                            val newLeft = (currentLeft.value + deltaFracX).coerceIn(0f, (1f - rectWidthFrac).coerceAtLeast(0f))
+                            val newTop = (currentTop.value + deltaFracY).coerceIn(0f, (1f - rectHeightFrac).coerceAtLeast(0f))
+                            onPanChanged(newLeft, newTop, newLeft + rectWidthFrac, newTop + rectHeightFrac)
+                        }
+                    }
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
@@ -511,7 +570,12 @@ fun EditorScreen(
         }
     }
 
-    LaunchedEffect(uiState.clips) {
+    // Only rebuild the player's media item list when the actual set/order of clips changes -
+    // NOT every time a clip's brightness/crop/trim/etc. is edited. Keying on uiState.clips
+    // directly caused a full clearMediaItems()+prepare() on every single edit, which is what
+    // was freezing playback until you left and re-entered the project.
+    val clipIdentitySignature = uiState.clips.joinToString("|") { "${it.id}:${it.uri}" }
+    LaunchedEffect(clipIdentitySignature) {
         exoPlayer.clearMediaItems()
         uiState.clips.forEach { clip ->
             exoPlayer.addMediaItem(MediaItem.fromUri(Uri.parse(clip.uri)))
@@ -562,10 +626,14 @@ fun EditorScreen(
     var transformFlipH by remember { mutableStateOf(false) }
     var transformFlipV by remember { mutableStateOf(false) }
     var transformSpeed by remember { mutableStateOf(1f) }
+    // null = free-form 4-corner crop. Non-null = a locked aspect ratio (label to show as selected);
+    // in that mode the crop rect keeps a fixed shape and the user pans it instead of resizing corners.
+    var lockedAspectLabel by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(showTransformDialog, selectedClip) {
         val clip = selectedClip
         if (showTransformDialog && clip != null) {
+            lockedAspectLabel = null
             val cropStr = clip.cropRectString
             if (!cropStr.isNullOrEmpty()) {
                 val parts = cropStr.split(",")
@@ -629,6 +697,7 @@ fun EditorScreen(
 
     val thumbnails = remember { mutableStateMapOf<String, List<Bitmap>>() }
     val clipDurations = remember { mutableStateMapOf<String, Long>() }
+    val clipDimensions = remember { mutableStateMapOf<String, Pair<Int, Int>>() } // clipId -> (width, height)
 
     LaunchedEffect(showTrimDialog, selectedClip) {
         val clip = selectedClip
@@ -654,6 +723,14 @@ fun EditorScreen(
                         val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                         val durationMs = durationStr?.toLongOrNull() ?: 5000L
                         clipDurations[clip.id] = durationMs
+
+                        val rawWidth = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 1920
+                        val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 1080
+                        val rotationDeg = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                        // Rotation metadata of 90/270 means width/height are swapped visually
+                        val displayWidth = if (rotationDeg == 90 || rotationDeg == 270) rawHeight else rawWidth
+                        val displayHeight = if (rotationDeg == 90 || rotationDeg == 270) rawWidth else rawHeight
+                        clipDimensions[clip.id] = displayWidth to displayHeight
                         
                         val bitmapList = mutableListOf<Bitmap>()
                         val seconds = (durationMs / 1000L).coerceIn(1L, 15L)
@@ -988,19 +1065,35 @@ fun EditorScreen(
 
                 // Crop handles drawn directly on the main preview while the Transform panel is open
                 if (showTransformDialog && selectedClip != null) {
-                    CropOverlay(
-                        left = transformLeft,
-                        top = transformTop,
-                        right = transformRight,
-                        bottom = transformBottom,
-                        onCropChanged = { newL, newT, newR, newB ->
-                            transformLeft = newL
-                            transformTop = newT
-                            transformRight = newR
-                            transformBottom = newB
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    if (lockedAspectLabel == null) {
+                        CropOverlay(
+                            left = transformLeft,
+                            top = transformTop,
+                            right = transformRight,
+                            bottom = transformBottom,
+                            onCropChanged = { newL, newT, newR, newB ->
+                                transformLeft = newL
+                                transformTop = newT
+                                transformRight = newR
+                                transformBottom = newB
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        CropOverlayLocked(
+                            left = transformLeft,
+                            top = transformTop,
+                            right = transformRight,
+                            bottom = transformBottom,
+                            onPanChanged = { newL, newT, newR, newB ->
+                                transformLeft = newL
+                                transformTop = newT
+                                transformRight = newR
+                                transformBottom = newB
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
             
@@ -1356,11 +1449,15 @@ fun EditorScreen(
                         )
                     }
                     showTransformDialog && selectedClip != null -> {
+                        val dims = clipDimensions[selectedClip!!.id] ?: (1920 to 1080)
                         TransformPanel(
                             rotation = transformRotation,
                             flipH = transformFlipH,
                             flipV = transformFlipV,
                             speed = transformSpeed,
+                            clipWidth = dims.first,
+                            clipHeight = dims.second,
+                            lockedAspectLabel = lockedAspectLabel,
                             onRotate = { transformRotation = (transformRotation + 90) % 360 },
                             onFlipHChange = { transformFlipH = it },
                             onFlipVChange = { transformFlipV = it },
@@ -1370,6 +1467,14 @@ fun EditorScreen(
                                 transformTop = 0f
                                 transformRight = 1f
                                 transformBottom = 1f
+                                lockedAspectLabel = null
+                            },
+                            onAspectSelected = { label, l, t, r, b ->
+                                lockedAspectLabel = label
+                                transformLeft = l
+                                transformTop = t
+                                transformRight = r
+                                transformBottom = b
                             },
                             onDone = {
                                 val clip = selectedClip!!
@@ -1382,10 +1487,12 @@ fun EditorScreen(
                                     speed = transformSpeed
                                 ))
                                 showTransformDialog = false
+                                lockedAspectLabel = null
                                 playerTrigger++
                             },
                             onCancel = {
                                 showTransformDialog = false
+                                lockedAspectLabel = null
                                 playerTrigger++
                                 val clip = selectedClip!!
                                 exoPlayer.setVideoEffects(getEffectsForClip(clip))
@@ -1508,17 +1615,33 @@ fun EditorScreen(
 
 }
 
+private data class AspectPreset(val label: String, val ratio: Float?) // ratio = width/height, null = No Frame (full, free-form)
+
+private val ASPECT_PRESETS = listOf(
+    AspectPreset("No Frame", null),
+    AspectPreset("1:1", 1f / 1f),
+    AspectPreset("4:5", 4f / 5f),
+    AspectPreset("3:4", 3f / 4f),
+    AspectPreset("4:3", 4f / 3f),
+    AspectPreset("9:16", 9f / 16f),
+    AspectPreset("16:9", 16f / 9f)
+)
+
 @Composable
 fun TransformPanel(
     rotation: Int,
     flipH: Boolean,
     flipV: Boolean,
     speed: Float,
+    clipWidth: Int,
+    clipHeight: Int,
+    lockedAspectLabel: String?,
     onRotate: () -> Unit,
     onFlipHChange: (Boolean) -> Unit,
     onFlipVChange: (Boolean) -> Unit,
     onSpeedChange: (Float) -> Unit,
     onResetCrop: () -> Unit,
+    onAspectSelected: (label: String?, left: Float, top: Float, right: Float, bottom: Float) -> Unit,
     onDone: () -> Unit,
     onCancel: () -> Unit
 ) {
@@ -1543,11 +1666,63 @@ fun TransformPanel(
         }
 
         Text(
-            text = "Drag the corners on the preview above to crop",
+            text = if (lockedAspectLabel == null) "Drag the corners on the preview above to crop"
+                   else "Drag the frame on the preview above to reposition",
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
         )
+
+        // Canvas-style aspect ratio presets - tap to lock the crop to that shape, centered on
+        // the clip's real dimensions, then drag on the preview to choose which part shows.
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        ) {
+            items(ASPECT_PRESETS) { preset ->
+                val isSelected = preset.label == (lockedAspectLabel ?: "No Frame")
+                Box(
+                    modifier = Modifier
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f),
+                            shape = RoundedCornerShape(6.dp)
+                        )
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable {
+                            if (preset.ratio == null) {
+                                onAspectSelected(null, 0f, 0f, 1f, 1f)
+                            } else {
+                                val safeW = clipWidth.coerceAtLeast(1)
+                                val safeH = clipHeight.coerceAtLeast(1)
+                                val videoAr = safeW.toFloat() / safeH.toFloat()
+                                val targetAr = preset.ratio
+                                var l = 0f; var t = 0f; var r = 1f; var b = 1f
+                                if (targetAr > videoAr) {
+                                    // Target is relatively wider than the source -> keep full width, crop height
+                                    val keepHeightFrac = videoAr / targetAr
+                                    t = (1f - keepHeightFrac) / 2f
+                                    b = t + keepHeightFrac
+                                } else {
+                                    // Target is relatively taller/narrower -> keep full height, crop width
+                                    val keepWidthFrac = targetAr / videoAr
+                                    l = (1f - keepWidthFrac) / 2f
+                                    r = l + keepWidthFrac
+                                }
+                                onAspectSelected(preset.label, l, t, r, b)
+                            }
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = preset.label,
+                        fontSize = 12.sp,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                    )
+                }
+            }
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
