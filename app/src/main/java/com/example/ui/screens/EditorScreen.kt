@@ -58,7 +58,7 @@ import java.util.UUID
 private fun getEffectsForClip(clip: ClipEntity): List<Effect> {
     val effects = mutableListOf<Effect>()
     
-    // 1. Crop
+    // Crop
     val cropStr = clip.cropRectString
     if (!cropStr.isNullOrEmpty()) {
         val parts = cropStr.split(",")
@@ -67,7 +67,6 @@ private fun getEffectsForClip(clip: ClipEntity): List<Effect> {
             val top = parts[1].toFloatOrNull() ?: 0f
             val right = parts[2].toFloatOrNull() ?: 1f
             val bottom = parts[3].toFloatOrNull() ?: 1f
-            
             val ndcLeft = -1f + 2f * left
             val ndcRight = -1f + 2f * right
             val ndcBottom = 1f - 2f * bottom
@@ -76,7 +75,7 @@ private fun getEffectsForClip(clip: ClipEntity): List<Effect> {
         }
     }
     
-    // 2. Rotation & Flip
+    // Rotation & Flip
     if (clip.rotationDegrees != 0 || clip.flipHorizontal || clip.flipVertical) {
         val scaleX = if (clip.flipHorizontal) -1f else 1f
         val scaleY = if (clip.flipVertical) -1f else 1f
@@ -88,7 +87,7 @@ private fun getEffectsForClip(clip: ClipEntity): List<Effect> {
         )
     }
     
-    // 3. Adjustments
+    // Adjustments
     if (clip.brightness != 0f) {
         effects.add(Brightness(clip.brightness))
     }
@@ -127,18 +126,10 @@ fun AdjustPanel(
 
     LaunchedEffect(brightness, contrast, saturation) {
         val effects = getEffectsForClip(clip).toMutableList()
-        effects.removeAll {
-            it is Brightness || it is Contrast || it is HslAdjustment
-        }
-        if (brightness != 0f) {
-            effects.add(Brightness(brightness))
-        }
-        if (contrast != 0f) {
-            effects.add(Contrast(contrast))
-        }
-        if (saturation != 0f) {
-            effects.add(HslAdjustment.Builder().adjustSaturation(saturation).build())
-        }
+        effects.removeAll { it is Brightness || it is Contrast || it is HslAdjustment }
+        if (brightness != 0f) effects.add(Brightness(brightness))
+        if (contrast != 0f) effects.add(Contrast(contrast))
+        if (saturation != 0f) effects.add(HslAdjustment.Builder().adjustSaturation(saturation).build())
         exoPlayer.setVideoEffects(effects)
     }
 
@@ -155,9 +146,7 @@ fun AdjustPanel(
             .padding(vertical = 8.dp)
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -186,17 +175,13 @@ fun AdjustPanel(
                 }
             },
             valueRange = selected.range,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
         )
 
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(28.dp),
             contentPadding = PaddingValues(horizontal = 20.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp)
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
         ) {
             items(AdjustType.values()) { type ->
                 val isSelected = type == selected
@@ -204,16 +189,9 @@ fun AdjustPanel(
                 else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .clickable { selected = type }
-                        .padding(vertical = 4.dp)
+                    modifier = Modifier.clickable { selected = type }.padding(vertical = 4.dp)
                 ) {
-                    Icon(
-                        imageVector = type.icon,
-                        contentDescription = type.label,
-                        tint = tintColor,
-                        modifier = Modifier.size(26.dp)
-                    )
+                    Icon(imageVector = type.icon, contentDescription = type.label, tint = tintColor, modifier = Modifier.size(26.dp))
                     Spacer(Modifier.height(2.dp))
                     Text(text = type.label, fontSize = 10.sp, color = tintColor)
                     Spacer(Modifier.height(2.dp))
@@ -267,9 +245,7 @@ fun VolumePanel(
             onValueChange = onVolumeChange,
             valueRange = 0f..2f,
             steps = 20,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
         )
     }
 }
@@ -291,54 +267,25 @@ fun CropOverlay(
     BoxWithConstraints(modifier = modifier) {
         val widthPx = constraints.maxWidth.toFloat()
         val heightPx = constraints.maxHeight.toFloat()
-        
         if (widthPx > 0 && heightPx > 0) {
             val leftPx = left * widthPx
             val topPx = top * heightPx
             val rightPx = right * widthPx
             val bottomPx = bottom * heightPx
-            
+
             androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize()) {
                 val outerWidth = size.width
                 val outerHeight = size.height
-                
-                // Top overlay
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(0f, 0f),
-                    size = Size(outerWidth, topPx)
-                )
-                // Bottom overlay
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(0f, bottomPx),
-                    size = Size(outerWidth, outerHeight - bottomPx)
-                )
-                // Left overlay
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(0f, topPx),
-                    size = Size(leftPx, bottomPx - topPx)
-                )
-                // Right overlay
-                drawRect(
-                    color = Color.Black.copy(alpha = 0.6f),
-                    topLeft = Offset(rightPx, topPx),
-                    size = Size(outerWidth - rightPx, bottomPx - topPx)
-                )
-                
-                // White outline
-                drawRect(
-                    color = Color.White,
-                    topLeft = Offset(leftPx, topPx),
-                    size = Size(rightPx - leftPx, bottomPx - topPx),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
-                )
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = Offset(0f, 0f), size = Size(outerWidth, topPx))
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = Offset(0f, bottomPx), size = Size(outerWidth, outerHeight - bottomPx))
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = Offset(0f, topPx), size = Size(leftPx, bottomPx - topPx))
+                drawRect(color = Color.Black.copy(alpha = 0.6f), topLeft = Offset(rightPx, topPx), size = Size(outerWidth - rightPx, bottomPx - topPx))
+                drawRect(color = Color.White, topLeft = Offset(leftPx, topPx), size = Size(rightPx - leftPx, bottomPx - topPx), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
             }
-            
+
             val handleSize = 32.dp
             val handleDensity = LocalDensity.current.density
-            
+
             // Top-Left Handle
             Box(
                 modifier = Modifier
@@ -360,7 +307,6 @@ fun CropOverlay(
                         }
                     }
             )
-            
             // Top-Right Handle
             Box(
                 modifier = Modifier
@@ -382,7 +328,6 @@ fun CropOverlay(
                         }
                     }
             )
-            
             // Bottom-Left Handle
             Box(
                 modifier = Modifier
@@ -404,7 +349,6 @@ fun CropOverlay(
                         }
                     }
             )
-            
             // Bottom-Right Handle
             Box(
                 modifier = Modifier
@@ -447,7 +391,6 @@ fun CropOverlayLocked(
     BoxWithConstraints(modifier = modifier) {
         val widthPx = constraints.maxWidth.toFloat()
         val heightPx = constraints.maxHeight.toFloat()
-
         if (widthPx > 0 && heightPx > 0) {
             val leftPx = left * widthPx
             val topPx = top * heightPx
@@ -464,7 +407,7 @@ fun CropOverlayLocked(
                 drawRect(color = Color.White, topLeft = Offset(leftPx, topPx), size = Size(rightPx - leftPx, bottomPx - topPx), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx()))
             }
 
-            // The whole frame is draggable - moves as one fixed-shape block, does not resize
+            // Whole frame draggable (no resize)
             Box(
                 modifier = Modifier
                     .offset(x = (leftPx / LocalDensity.current.density).dp, y = (topPx / LocalDensity.current.density).dp)
@@ -513,7 +456,7 @@ fun EditorScreen(
     }
     
     var isPlaying by remember { mutableStateOf(false) }
-    var shouldPlay by remember { mutableStateOf(false) }  // for restoring playback after prepare
+    var shouldPlay by remember { mutableStateOf(false) }
     
     LaunchedEffect(uiState.project?.audioVolume) {
         audioPlayer.volume = uiState.project?.audioVolume ?: 0.5f
@@ -532,12 +475,10 @@ fun EditorScreen(
                     }
                 }
                 .build()
-
             val audioMediaItem = MediaItem.Builder()
                 .setUri(Uri.parse(audioUri))
                 .setClippingConfiguration(audioClippingConfiguration)
                 .build()
-            
             audioPlayer.setMediaItem(audioMediaItem)
             audioPlayer.prepare()
         } else {
@@ -576,13 +517,12 @@ fun EditorScreen(
                 if (clip != null) {
                     exoPlayer.setPlaybackParameters(androidx.media3.common.PlaybackParameters(clip.speed))
                     exoPlayer.setVideoEffects(getEffectsForClip(clip))
-                    exoPlayer.volume = clip.volume  // apply per-clip volume
+                    exoPlayer.volume = clip.volume
                 }
             }
         }
         exoPlayer.addListener(listener)
         
-        // Initial clip configuration
         val initialIndex = exoPlayer.currentMediaItemIndex
         val initialClip = uiState.clips.getOrNull(initialIndex)
         if (initialClip != null) {
@@ -596,7 +536,6 @@ fun EditorScreen(
         }
     }
 
-    // Only rebuild the player's media item list when the actual set/order of clips changes
     val clipIdentitySignature = uiState.clips.joinToString("|") { "${it.id}:${it.uri}" }
     LaunchedEffect(clipIdentitySignature) {
         exoPlayer.clearMediaItems()
@@ -604,7 +543,6 @@ fun EditorScreen(
             exoPlayer.addMediaItem(MediaItem.fromUri(Uri.parse(clip.uri)))
         }
         exoPlayer.prepare()
-        // restore playback state if it was playing
         if (shouldPlay) {
             exoPlayer.play()
         }
@@ -646,7 +584,6 @@ fun EditorScreen(
     var isExporting by remember { mutableStateOf(false) }
     val exportScope = rememberCoroutineScope()
 
-    // Hoisted Transform state
     var transformLeft by remember { mutableStateOf(0f) }
     var transformTop by remember { mutableStateOf(0f) }
     var transformRight by remember { mutableStateOf(1f) }
@@ -736,8 +673,48 @@ fun EditorScreen(
     var currentPositionMs by remember { mutableStateOf(0L) }
     val localDensity = LocalDensity.current
     val density = localDensity.density
-    val MS_TO_DP = 0.02f
+    val MS_TO_DP = 0.02f // 20 dp per second
 
+    // Helper functions to map time <-> X position in the timeline (relative to start of timeline content)
+    fun getXForTime(timeMs: Long): Float {
+        var accumulated = 0f
+        for (clip in uiState.clips) {
+            val realDur = clipDurations[clip.id] ?: 5000L
+            val clipStart = clip.startTimeMs
+            val clipEnd = if (clip.endTimeMs > 0) clip.endTimeMs else realDur
+            val clipPlayDur = (clipEnd - clipStart).coerceAtLeast(0L)
+            if (timeMs <= clipStart + clipPlayDur) {
+                val offsetInClip = (timeMs - clipStart).coerceIn(0L, clipPlayDur)
+                return accumulated + offsetInClip * MS_TO_DP
+            }
+            accumulated += clipPlayDur * MS_TO_DP
+        }
+        return accumulated
+    }
+
+    fun getTimeForX(x: Float): Long {
+        var accumulated = 0f
+        for (clip in uiState.clips) {
+            val realDur = clipDurations[clip.id] ?: 5000L
+            val clipStart = clip.startTimeMs
+            val clipEnd = if (clip.endTimeMs > 0) clip.endTimeMs else realDur
+            val clipPlayDur = (clipEnd - clipStart).coerceAtLeast(0L)
+            val clipWidth = clipPlayDur * MS_TO_DP
+            if (x <= accumulated + clipWidth) {
+                val offsetInClip = ((x - accumulated) / MS_TO_DP).toLong().coerceIn(0L, clipPlayDur)
+                return clipStart + offsetInClip
+            }
+            accumulated += clipWidth
+        }
+        return if (uiState.clips.isNotEmpty()) {
+            val lastClip = uiState.clips.last()
+            val realDur = clipDurations[lastClip.id] ?: 5000L
+            val endTime = if (lastClip.endTimeMs > 0) lastClip.endTimeMs else realDur
+            endTime
+        } else 0L
+    }
+
+    // Generate thumbnails
     LaunchedEffect(uiState.clips) {
         uiState.clips.forEach { clip ->
             if (!thumbnails.containsKey(clip.id)) {
@@ -846,7 +823,6 @@ fun EditorScreen(
         }
     }
 
-    // Split function (inline – move to ViewModel in production)
     val splitClipAtPlayhead = {
         val clip = selectedClip
         if (clip == null) {
@@ -858,7 +834,6 @@ fun EditorScreen(
         val clipEnd = if (clip.endTimeMs > 0) clip.endTimeMs else realDur
         val splitPos = currentPositionMs
         if (splitPos > clipStart && splitPos < clipEnd) {
-            // Create two new clips
             val leftClip = clip.copy(
                 id = UUID.randomUUID().toString(),
                 startTimeMs = clipStart,
@@ -871,26 +846,9 @@ fun EditorScreen(
                 endTimeMs = clipEnd,
                 orderIndex = clip.orderIndex + 1
             )
-            // Replace in list
-            val currentList = uiState.clips.toMutableList()
-            val index = currentList.indexOfFirst { it.id == clip.id }
-            if (index != -1) {
-                currentList.removeAt(index)
-                currentList.add(index, leftClip)
-                currentList.add(index + 1, rightClip)
-                // Update order indices
-                currentList.forEachIndexed { i, c -> c.orderIndex = i }
-                // Update ViewModel (you'll need a method in ViewModel for this)
-                // For now we call viewModel.updateClips(currentList) – you'll need to implement that
-                // viewModel.updateClips(currentList)
-                // Since we don't have that function, we'll just show a toast and update locally
-                // Actually we need to persist. For now, we'll just do a local update:
-                // But we must update the state through ViewModel.
-                // Let's assume you have a method: viewModel.replaceClips(currentList)
-                // For the sake of this example, we'll call a placeholder.
-                Toast.makeText(context, "Split at ${formatMs(splitPos)}", Toast.LENGTH_SHORT).show()
-                // TODO: implement actual split in ViewModel
-            }
+            // Replace in ViewModel – you need to implement this in your ViewModel
+            Toast.makeText(context, "Split at ${formatMs(splitPos)}", Toast.LENGTH_SHORT).show()
+            // TODO: Call viewModel.replaceClips(...)
         } else {
             Toast.makeText(context, "Playhead not inside selected clip", Toast.LENGTH_SHORT).show()
         }
@@ -939,12 +897,10 @@ fun EditorScreen(
                                             }
                                         }
                                         .build()
-                                        
                                     val mediaItem = MediaItem.Builder()
                                         .setUri(Uri.parse(clip.uri))
                                         .setClippingConfiguration(clippingConfiguration)
                                         .build()
-                                        
                                     val videoEffects = getEffectsForClip(clip)
                                     val audioProcessors = mutableListOf<AudioProcessor>()
                                     if (clip.speed != 1f) {
@@ -954,21 +910,17 @@ fun EditorScreen(
                                         }
                                         audioProcessors.add(SpeedChangingAudioProcessor(speedProvider))
                                     }
-                                    // Add per‑clip volume
                                     if (clip.volume != 1f) {
                                         audioProcessors.add(VolumeAudioProcessor(clip.volume))
                                     }
-                                        
                                     EditedMediaItem.Builder(mediaItem)
                                         .setEffects(Effects(audioProcessors, videoEffects))
                                         .build()
                                 }
                                 
                                 val videoSequence = EditedMediaItemSequence(editedMediaItems)
-                                
                                 val project = uiState.project
                                 val audioUriStr = project?.audioUri
-                                
                                 val composition = if (!audioUriStr.isNullOrEmpty()) {
                                     val audioClippingConfiguration = MediaItem.ClippingConfiguration.Builder()
                                         .setStartPositionMs(project.audioStartTimeMs)
@@ -978,18 +930,14 @@ fun EditorScreen(
                                             }
                                         }
                                         .build()
-
                                     val audioMediaItem = MediaItem.Builder()
                                         .setUri(Uri.parse(audioUriStr))
                                         .setClippingConfiguration(audioClippingConfiguration)
                                         .build()
-
                                     val volumeAudioProcessor = VolumeAudioProcessor(project.audioVolume)
-                                    
                                     val editedAudioItem = EditedMediaItem.Builder(audioMediaItem)
                                         .setEffects(Effects(listOf(volumeAudioProcessor), emptyList()))
                                         .build()
-
                                     val audioSequence = EditedMediaItemSequence(listOf(editedAudioItem))
                                     Composition.Builder(listOf(videoSequence, audioSequence)).build()
                                 } else {
@@ -997,12 +945,10 @@ fun EditorScreen(
                                 }
                                 
                                 val outputFile = File(context.getExternalFilesDir(android.os.Environment.DIRECTORY_MOVIES), "exported_video_${System.currentTimeMillis()}.mp4")
-                                
                                 val transformer = Transformer.Builder(context)
                                     .addListener(object : Transformer.Listener {
                                         override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                                             isExporting = false
-
                                             exportScope.launch(Dispatchers.IO) {
                                                 val values = android.content.ContentValues().apply {
                                                     put(android.provider.MediaStore.Video.Media.DISPLAY_NAME, outputFile.name)
@@ -1012,10 +958,8 @@ fun EditorScreen(
                                                         put(android.provider.MediaStore.Video.Media.IS_PENDING, 1)
                                                     }
                                                 }
-
                                                 val resolver = context.contentResolver
                                                 val uri = resolver.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
-
                                                 if (uri != null) {
                                                     try {
                                                         resolver.openOutputStream(uri)?.use { outputStream ->
@@ -1023,13 +967,11 @@ fun EditorScreen(
                                                                 inputStream.copyTo(outputStream)
                                                             }
                                                         }
-
                                                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                                                             values.clear()
                                                             values.put(android.provider.MediaStore.Video.Media.IS_PENDING, 0)
                                                             resolver.update(uri, values, null, null)
                                                         }
-
                                                         outputFile.delete()
                                                         withContext(Dispatchers.Main) {
                                                             Toast.makeText(context, "Saved to Movies/XEditor", Toast.LENGTH_LONG).show()
@@ -1053,7 +995,6 @@ fun EditorScreen(
                                         }
                                     })
                                     .build()
-                                    
                                 transformer.start(composition, outputFile.absolutePath)
                             },
                             colors = ButtonDefaults.buttonColors(
@@ -1081,7 +1022,7 @@ fun EditorScreen(
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).background(Color.Black)
         ) {
-            // Video Preview Canvas
+            // Video Preview
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1099,7 +1040,6 @@ fun EditorScreen(
                         if (playerView.player != exoPlayer) {
                             playerView.player = exoPlayer
                         }
-                        // Force a layout pass to refresh the surface
                         playerView.requestLayout()
                     },
                     modifier = Modifier
@@ -1107,7 +1047,6 @@ fun EditorScreen(
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                 )
                 
-                // Play/Pause Button
                 IconButton(
                     onClick = {
                         if (isPlaying) {
@@ -1131,7 +1070,6 @@ fun EditorScreen(
                     )
                 }
                 
-                // Video properties overlay
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
@@ -1142,7 +1080,6 @@ fun EditorScreen(
                     Text("1080p | 30fps", fontSize = 10.sp, fontFamily = FontFamily.Monospace, color = Color.White)
                 }
 
-                // Crop handles drawn directly on the main preview while the Transform panel is open
                 if (showTransformDialog && selectedClip != null) {
                     if (lockedAspectLabel == null) {
                         CropOverlay(
@@ -1185,7 +1122,7 @@ fun EditorScreen(
             ) {
                 Divider(color = MaterialTheme.colorScheme.outline)
                 
-                // Time Codes / Ruler
+                // Time Codes
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1199,7 +1136,6 @@ fun EditorScreen(
                     Text("Total: $totalStr", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color.LightGray)
                 }
 
-                // Scrollable ruler, tracks and playhead
                 val scrollState = rememberScrollState()
                 
                 BoxWithConstraints(
@@ -1209,52 +1145,35 @@ fun EditorScreen(
                         .padding(bottom = 8.dp)
                 ) {
                     val viewportWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+                    val viewportWidthDp = with(LocalDensity.current) { maxWidth }
 
-                    // Compute total visual width in dp based on real durations of all clips
+                    // Total width of all clips plus add button etc.
                     val totalClipsWidthDp = uiState.clips.sumOf { clip ->
-                        val realDur = clipDurations[clip.id] ?: 5000L
-                        (realDur * MS_TO_DP).toDouble()
-                    }.dp
-                    
-                    val timelineContentWidthDp = totalClipsWidthDp + 120.dp
-                    
-                    // Playhead Line Calculation
-                    var playheadXDp = 0.dp
-                    var accumulatedX = 0f
-                    var remainingPlayMs = currentPositionMs
-                    var foundPlayhead = false
-                    for (clip in uiState.clips) {
                         val realDur = clipDurations[clip.id] ?: 5000L
                         val clipPlayDur = if (clip.endTimeMs > 0) {
                             (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
                         } else {
                             (realDur - clip.startTimeMs).coerceAtLeast(0L)
                         }
-                        
-                        if (!foundPlayhead && remainingPlayMs <= clipPlayDur) {
-                            val offsetInClip = clip.startTimeMs + remainingPlayMs
-                            playheadXDp = (accumulatedX + offsetInClip * MS_TO_DP).dp
-                            foundPlayhead = true
-                        }
-                        accumulatedX += realDur * MS_TO_DP
-                        remainingPlayMs -= clipPlayDur
-                    }
-                    if (!foundPlayhead && uiState.clips.isNotEmpty()) {
-                        val lastClip = uiState.clips.last()
-                        val realDur = clipDurations[lastClip.id] ?: 5000L
-                        val endTime = if (lastClip.endTimeMs > 0) lastClip.endTimeMs else realDur
-                        playheadXDp = (accumulatedX - realDur * MS_TO_DP + endTime * MS_TO_DP).dp
-                    }
+                        (clipPlayDur * MS_TO_DP).toDouble()
+                    }.dp + 60.dp // add button width
 
-                    // Auto-scroll timeline during playback to keep playhead centered
+                    val timelineContentWidthDp = totalClipsWidthDp + 32.dp // padding
+
+                    // Compute the X position of the current playhead in the timeline content
+                    val playheadXInContent = getXForTime(currentPositionMs)
+
+                    // Target scroll to center the playhead
+                    val targetScrollPx = (playheadXInContent * density - viewportWidthPx / 2).toInt().coerceAtLeast(0)
+
+                    // Auto-scroll during playback
                     LaunchedEffect(currentPositionMs, isPlaying) {
                         if (isPlaying) {
-                            val playheadXPx = with(localDensity) { playheadXDp.toPx() }
-                            val targetScroll = (playheadXPx - viewportWidthPx / 2).toInt().coerceAtLeast(0)
-                            scrollState.scrollTo(targetScroll)
+                            scrollState.scrollTo(targetScrollPx)
                         }
                     }
-                    
+
+                    // Content (scrollable)
                     Row(
                         modifier = Modifier
                             .fillMaxSize()
@@ -1270,7 +1189,7 @@ fun EditorScreen(
                                 modifier = Modifier.fillMaxSize(),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                // 1. Main Video Track (Clips)
+                                // Video clips track
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                     modifier = Modifier
@@ -1280,11 +1199,15 @@ fun EditorScreen(
                                 ) {
                                     uiState.clips.forEach { clip ->
                                         val realDur = clipDurations[clip.id] ?: 5000L
-                                        val clipWidthDp = (realDur * MS_TO_DP).coerceAtLeast(100f).dp
+                                        val clipPlayDur = if (clip.endTimeMs > 0) {
+                                            (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
+                                        } else {
+                                            (realDur - clip.startTimeMs).coerceAtLeast(0L)
+                                        }
+                                        val clipWidthDp = (clipPlayDur * MS_TO_DP).coerceAtLeast(100f).dp
                                         
                                         val startTime = clip.startTimeMs
                                         val endTime = if (clip.endTimeMs > 0) clip.endTimeMs else realDur
-                                        
                                         val leftPercent = if (realDur > 0) startTime.toFloat() / realDur else 0f
                                         val rightPercent = if (realDur > 0) endTime.toFloat() / realDur else 1f
                                         val currentClip = rememberUpdatedState(clip)
@@ -1338,7 +1261,6 @@ fun EditorScreen(
                                                 }
                                             }
                                             
-                                            // Label Overlay
                                             Box(
                                                 modifier = Modifier
                                                     .align(Alignment.TopStart)
@@ -1349,9 +1271,9 @@ fun EditorScreen(
                                                 Text("Clip ${clip.orderIndex + 1}", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
                                             }
                                             
-                                            // Drag Trim Handles (only if selected)
+                                            // Trim handles
                                             if (selectedClip?.id == clip.id) {
-                                                // Left Trim Handle
+                                                // Left handle
                                                 Box(
                                                     modifier = Modifier
                                                         .align(Alignment.CenterStart)
@@ -1383,8 +1305,7 @@ fun EditorScreen(
                                                             .border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
                                                     )
                                                 }
-                                                
-                                                // Right Trim Handle
+                                                // Right handle
                                                 Box(
                                                     modifier = Modifier
                                                         .align(Alignment.CenterStart)
@@ -1434,7 +1355,7 @@ fun EditorScreen(
                                     }
                                 }
                                 
-                                // 2. Audio Track UI
+                                // Audio track
                                 val hasAudio = uiState.project?.audioUri != null
                                 Box(
                                     modifier = Modifier
@@ -1449,9 +1370,7 @@ fun EditorScreen(
                                             color = if (hasAudio) MaterialTheme.colorScheme.secondary else Color.Transparent,
                                             shape = RoundedCornerShape(6.dp)
                                         )
-                                        .clickable {
-                                            showAudioDialog = true
-                                        }
+                                        .clickable { showAudioDialog = true }
                                         .padding(horizontal = 12.dp, vertical = 4.dp)
                                         .testTag("audio_track_box"),
                                     contentAlignment = Alignment.CenterStart
@@ -1492,31 +1411,42 @@ fun EditorScreen(
                                     }
                                 }
                             }
-                            
-                            // 3. Playhead Line
+                        }
+                    }
+
+                    // Fixed playhead overlay (centered)
+                    Box(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        // Playhead line
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .width(2.dp)
+                                .offset(x = (viewportWidthDp / 2) - 1.dp)
+                                .background(MaterialTheme.colorScheme.primary)
+                        ) {
+                            // Playhead knob (draggable)
                             Box(
                                 modifier = Modifier
-                                    .fillMaxHeight()
-                                    .width(2.dp)
-                                    .offset(x = playheadXDp)
-                                    .background(MaterialTheme.colorScheme.primary)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(12.dp)
-                                        .offset(x = (-5).dp, y = 0.dp)
-                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                        .pointerInput(Unit) {
-                                            detectDragGestures { change, dragAmount ->
-                                                change.consume()
-                                                val deltaMs = ((dragAmount.x / density) / MS_TO_DP).toLong()
-                                                val newPos = (currentPositionMs + deltaMs).coerceIn(0L, totalDurationMs)
-                                                currentPositionMs = newPos
-                                                seekToGlobalPosition(newPos)
-                                            }
+                                    .size(12.dp)
+                                    .offset(x = (-5).dp, y = 0.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                    .pointerInput(Unit) {
+                                        detectDragGestures { change, dragAmount ->
+                                            change.consume()
+                                            // Convert drag to time change
+                                            val currentX = getXForTime(currentPositionMs)
+                                            val newX = (currentX + dragAmount.x / density).coerceAtLeast(0f)
+                                            val newTime = getTimeForX(newX).coerceIn(0L, totalDurationMs)
+                                            currentPositionMs = newTime
+                                            seekToGlobalPosition(newTime)
+                                            // Scroll to center the new time
+                                            val targetScroll = (getXForTime(newTime) * density - viewportWidthPx / 2).toInt().coerceAtLeast(0)
+                                            scrollState.scrollTo(targetScroll)
                                         }
-                                )
-                            }
+                                    }
+                            )
                         }
                     }
                 }
@@ -1620,14 +1550,12 @@ fun EditorScreen(
                                 clipVolume = newVolume
                                 val clip = selectedClip!!
                                 viewModel.updateClip(clip.copy(volume = newVolume))
-                                // Apply immediately to the playing clip
                                 exoPlayer.volume = newVolume
                             },
                             onDone = {
                                 showVolumeDialog = false
                             },
                             onCancel = {
-                                // Revert to saved volume
                                 val clip = selectedClip!!
                                 clipVolume = clip.volume
                                 exoPlayer.volume = clip.volume
@@ -1735,7 +1663,7 @@ fun EditorScreen(
     }
 }
 
-private data class AspectPreset(val label: String, val ratio: Float?) // ratio = width/height, null = No Frame (full, free-form)
+private data class AspectPreset(val label: String, val ratio: Float?)
 
 private val ASPECT_PRESETS = listOf(
     AspectPreset("No Frame", null),
