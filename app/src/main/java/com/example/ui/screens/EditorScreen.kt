@@ -1123,12 +1123,14 @@ fun EditorScreen(
                 // Scrollable ruler, tracks and playhead
                 val scrollState = rememberScrollState()
                 
-                Box(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(bottom = 8.dp)
                 ) {
+                    val viewportWidthPx = with(LocalDensity.current) { maxWidth.toPx() }
+
                     // Compute total visual width in dp based on real durations of all clips
                     val totalClipsWidthDp = uiState.clips.sumOf { clip ->
                         val realDur = clipDurations[clip.id] ?: 5000L
@@ -1136,6 +1138,43 @@ fun EditorScreen(
                     }.dp
                     
                     val timelineContentWidthDp = totalClipsWidthDp + 120.dp
+                    
+                    // 3. Playhead Line Calculation
+                    var playheadXDp = 0.dp
+                    var accumulatedX = 0f
+                    var remainingPlayMs = currentPositionMs
+                    var foundPlayhead = false
+                    for (clip in uiState.clips) {
+                        val realDur = clipDurations[clip.id] ?: 5000L
+                        val clipPlayDur = if (clip.endTimeMs > 0) {
+                            (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
+                        } else {
+                            (realDur - clip.startTimeMs).coerceAtLeast(0L)
+                        }
+                        
+                        if (!foundPlayhead && remainingPlayMs <= clipPlayDur) {
+                            val offsetInClip = clip.startTimeMs + remainingPlayMs
+                            playheadXDp = (accumulatedX + offsetInClip * MS_TO_DP).dp
+                            foundPlayhead = true
+                        }
+                        accumulatedX += realDur * MS_TO_DP
+                        remainingPlayMs -= clipPlayDur
+                    }
+                    if (!foundPlayhead && uiState.clips.isNotEmpty()) {
+                        val lastClip = uiState.clips.last()
+                        val realDur = clipDurations[lastClip.id] ?: 5000L
+                        val endTime = if (lastClip.endTimeMs > 0) lastClip.endTimeMs else realDur
+                        playheadXDp = (accumulatedX - realDur * MS_TO_DP + endTime * MS_TO_DP).dp
+                    }
+
+                    // Auto-scroll timeline during playback to keep playhead centered
+                    LaunchedEffect(currentPositionMs, isPlaying) {
+                        if (isPlaying) {
+                            val playheadXPx = with(localDensity) { playheadXDp.toPx() }
+                            val targetScroll = (playheadXPx - viewportWidthPx / 2).toInt().coerceAtLeast(0)
+                            scrollState.scrollTo(targetScroll)
+                        }
+                    }
                     
                     Row(
                         modifier = Modifier
@@ -1376,33 +1415,6 @@ fun EditorScreen(
                             }
                             
                             // 3. Playhead Line
-                            var playheadXDp = 0.dp
-                            var accumulatedX = 0f
-                            var remainingPlayMs = currentPositionMs
-                            var foundPlayhead = false
-                            for (clip in uiState.clips) {
-                                val realDur = clipDurations[clip.id] ?: 5000L
-                                val clipPlayDur = if (clip.endTimeMs > 0) {
-                                    (clip.endTimeMs - clip.startTimeMs).coerceAtLeast(0L)
-                                } else {
-                                    (realDur - clip.startTimeMs).coerceAtLeast(0L)
-                                }
-                                
-                                if (!foundPlayhead && remainingPlayMs <= clipPlayDur) {
-                                    val offsetInClip = clip.startTimeMs + remainingPlayMs
-                                    playheadXDp = (accumulatedX + offsetInClip * MS_TO_DP).dp
-                                    foundPlayhead = true
-                                }
-                                accumulatedX += realDur * MS_TO_DP
-                                remainingPlayMs -= clipPlayDur
-                            }
-                            if (!foundPlayhead && uiState.clips.isNotEmpty()) {
-                                val lastClip = uiState.clips.last()
-                                val realDur = clipDurations[lastClip.id] ?: 5000L
-                                val endTime = if (lastClip.endTimeMs > 0) lastClip.endTimeMs else realDur
-                                playheadXDp = (accumulatedX - realDur * MS_TO_DP + endTime * MS_TO_DP).dp
-                            }
-                            
                             Box(
                                 modifier = Modifier
                                     .fillMaxHeight()
